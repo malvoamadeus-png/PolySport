@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseConfig } from "./supabaseClient";
 
 type MasterResult = {
@@ -24,6 +24,11 @@ type AddressMetric = {
   hhi: number | null;
   max_drawdown: number | null;
   sharpe: number | null;
+  current_position_value_usd: number | null;
+  total_trades: number | null;
+  win_rate: number | null;
+  avg_trade_price: number | null;
+  details_json?: any;
   confidence: string | null;
   updated_at: string | null;
 };
@@ -39,6 +44,10 @@ type NumericKey = keyof Pick<
   | "sharpe"
   | "hhi"
   | "position_size_cv"
+  | "current_position_value_usd"
+  | "total_trades"
+  | "win_rate"
+  | "avg_trade_price"
 >;
 
 type FilterOp = "gte" | "lte";
@@ -49,6 +58,10 @@ const FILTERS: FilterDef[] = [
   { key: "total_pnl", label: "Total PnL", format: "num", allowAbs: true },
   { key: "realized_pnl", label: "Realized PnL", format: "num", allowAbs: true },
   { key: "unrealized_pnl", label: "Unrealized PnL", format: "num", allowAbs: true },
+  { key: "current_position_value_usd", label: "Current Value", format: "num" },
+  { key: "total_trades", label: "Total Trades", format: "num" },
+  { key: "win_rate", label: "Win Rate", format: "pct" },
+  { key: "avg_trade_price", label: "Avg Trade Price", format: "num" },
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
   { key: "max_drawdown", label: "Max Drawdown", format: "pct" },
@@ -69,7 +82,17 @@ function fmtPct(v: number | null | undefined) {
 
 type MetricKey = keyof Pick<
   AddressMetric,
-  "total_pnl" | "roi" | "profit_factor" | "max_drawdown" | "sharpe" | "hhi" | "position_size_cv"
+  | "total_pnl"
+  | "roi"
+  | "profit_factor"
+  | "max_drawdown"
+  | "sharpe"
+  | "hhi"
+  | "position_size_cv"
+  | "current_position_value_usd"
+  | "total_trades"
+  | "win_rate"
+  | "avg_trade_price"
 >;
 
 type MetricDef = {
@@ -87,7 +110,11 @@ const METRICS: MetricDef[] = [
   { key: "max_drawdown", label: "Max Drawdown", scale: "linear", better: "low", format: "pct" },
   { key: "sharpe", label: "Sharpe", scale: "linear", better: "high", format: "num" },
   { key: "hhi", label: "HHI", scale: "linear", better: "low", format: "num" },
-  { key: "position_size_cv", label: "Position Size CV", scale: "linear", better: "low", format: "num" }
+  { key: "position_size_cv", label: "Position Size CV", scale: "linear", better: "low", format: "num" },
+  { key: "current_position_value_usd", label: "Current Value", scale: "linear", better: "high", format: "num" },
+  { key: "total_trades", label: "Total Trades", scale: "linear", better: "high", format: "num" },
+  { key: "win_rate", label: "Win Rate", scale: "linear", better: "high", format: "pct" },
+  { key: "avg_trade_price", label: "Avg Trade Price", scale: "linear", better: "high", format: "num" }
 ];
 
 function fmtMetric(def: MetricDef, v: number | null | undefined) {
@@ -323,6 +350,8 @@ export function App() {
     const n = v ? Number(v) : NaN;
     return Number.isFinite(n) && n > 280 ? n : 640;
   });
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
+  const filterTimerRef = useRef<number | undefined>(undefined);
 
   const errorHelp = useMemo(() => {
     if (!error) return null;
@@ -363,14 +392,29 @@ export function App() {
     try {
       const res = await supabase
         .from("address_metrics")
-        .select("address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,position_size_cv,hhi,max_drawdown,sharpe,confidence,updated_at")
+        .select(
+          "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,position_size_cv,hhi,max_drawdown,sharpe,confidence,updated_at,details_json"
+        )
         .order("updated_at", { ascending: false })
         .limit(5000);
       if (res.error) {
         setError(res.error.message);
         setRows([]);
       } else {
-        const data = (res.data ?? []) as AddressMetric[];
+        const data = ((res.data ?? []) as any[]).map((r) => {
+          const pb = r?.details_json?.positionBased;
+          return {
+            ...r,
+            current_position_value_usd:
+              typeof pb?.current_position_value_usd === "number" && Number.isFinite(pb.current_position_value_usd)
+                ? pb.current_position_value_usd
+                : null,
+            total_trades: typeof pb?.total_trades === "number" && Number.isFinite(pb.total_trades) ? pb.total_trades : null,
+            win_rate: typeof pb?.win_rate === "number" && Number.isFinite(pb.win_rate) ? pb.win_rate : null,
+            avg_trade_price:
+              typeof pb?.avg_trade_price === "number" && Number.isFinite(pb.avg_trade_price) ? pb.avg_trade_price : null
+          } as AddressMetric;
+        });
         setRows(data);
         setSelected((prev) => {
           const next: Record<string, boolean> = {};
@@ -532,8 +576,13 @@ export function App() {
                 </label>
               ) : null}
               <input
-                value={filterValue}
-                onChange={(e) => setFilterValue(e.target.value)}
+                ref={filterInputRef}
+                defaultValue={filterValue}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (filterTimerRef.current) window.clearTimeout(filterTimerRef.current);
+                  filterTimerRef.current = window.setTimeout(() => setFilterValue(v), 250);
+                }}
                 placeholder="阈值（留空=不过滤）"
                 style={{ width: 160, padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd" }}
               />
@@ -580,6 +629,10 @@ export function App() {
                   <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee", width: 44 }}>选</th>
                   <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>地址</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>PnL</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Value</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Trades</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Win%</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>AvgPx</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Realized</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Unrealized</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>ROI</th>
@@ -614,6 +667,10 @@ export function App() {
                       </a>
                     </td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_pnl, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.current_position_value_usd, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_trades, 0)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.avg_trade_price, 4)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.realized_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.unrealized_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.roi)}</td>
@@ -626,7 +683,7 @@ export function App() {
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={10} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={14} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>

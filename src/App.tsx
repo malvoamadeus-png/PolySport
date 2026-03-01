@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseConfig } from "./supabaseClient";
+import { useAuth } from "./useAuth";
+import { useTags, type TagValue } from "./useTags";
 
 type MasterResult = {
   id: number;
@@ -20,15 +22,12 @@ type AddressMetric = {
   unrealized_pnl: number | null;
   roi: number | null;
   profit_factor: number | null;
-  position_size_cv: number | null;
-  hhi: number | null;
   max_drawdown: number | null;
   sharpe: number | null;
   current_position_value_usd: number | null;
   total_trades: number | null;
   win_rate: number | null;
   avg_trade_price: number | null;
-  details_json?: any;
   confidence: string | null;
   updated_at: string | null;
 };
@@ -42,8 +41,6 @@ type NumericKey = keyof Pick<
   | "profit_factor"
   | "max_drawdown"
   | "sharpe"
-  | "hhi"
-  | "position_size_cv"
   | "current_position_value_usd"
   | "total_trades"
   | "win_rate"
@@ -51,6 +48,8 @@ type NumericKey = keyof Pick<
 >;
 
 type FilterOp = "gte" | "lte";
+
+type ActiveFilter = { id: number; key: NumericKey; op: FilterOp; abs: boolean; value: string };
 
 type FilterDef = { key: NumericKey; label: string; format: "num" | "pct"; allowAbs?: boolean };
 
@@ -65,9 +64,7 @@ const FILTERS: FilterDef[] = [
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
   { key: "max_drawdown", label: "Max Drawdown", format: "pct" },
-  { key: "sharpe", label: "Sharpe", format: "num" },
-  { key: "hhi", label: "HHI", format: "num" },
-  { key: "position_size_cv", label: "Position Size CV", format: "num" }
+  { key: "sharpe", label: "Sharpe", format: "num" }
 ];
 
 function fmtNum(v: number | null | undefined, digits = 2) {
@@ -87,8 +84,6 @@ type MetricKey = keyof Pick<
   | "profit_factor"
   | "max_drawdown"
   | "sharpe"
-  | "hhi"
-  | "position_size_cv"
   | "current_position_value_usd"
   | "total_trades"
   | "win_rate"
@@ -109,8 +104,6 @@ const METRICS: MetricDef[] = [
   { key: "profit_factor", label: "Profit Factor", scale: "linear", better: "high", format: "num" },
   { key: "max_drawdown", label: "Max Drawdown", scale: "linear", better: "low", format: "pct" },
   { key: "sharpe", label: "Sharpe", scale: "linear", better: "high", format: "num" },
-  { key: "hhi", label: "HHI", scale: "linear", better: "low", format: "num" },
-  { key: "position_size_cv", label: "Position Size CV", scale: "linear", better: "low", format: "num" },
   { key: "current_position_value_usd", label: "Current Value", scale: "linear", better: "high", format: "num" },
   { key: "total_trades", label: "Total Trades", scale: "linear", better: "high", format: "num" },
   { key: "win_rate", label: "Win Rate", scale: "linear", better: "high", format: "pct" },
@@ -283,7 +276,7 @@ function RadarChart(props: { title: string; metrics: MetricDef[]; rows: AddressM
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
         <div style={{ fontWeight: 600 }}>{props.title}</div>
         <div style={{ fontSize: 12, color: "#666" }}>
-          PnL 用对数压缩显示；MDD/HHI/CV 为“低更好”已自动反向
+          PnL 用对数压缩显示；MDD 为”低更好”已自动反向
         </div>
       </div>
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={props.title}>
@@ -331,12 +324,14 @@ function RadarChart(props: { title: string; metrics: MetricDef[]; rows: AddressM
 }
 
 export function App() {
+  const { user, isAdmin, signInWithGoogle, signOut } = useAuth();
+  const { tags, setTag } = useTags();
   const [lastRun, setLastRun] = useState<MasterResult | null>(null);
   const [rows, setRows] = useState<AddressMetric[]>([]);
-  const [filterKey, setFilterKey] = useState<NumericKey>("total_pnl");
-  const [filterOp, setFilterOp] = useState<FilterOp>("gte");
-  const [filterAbs, setFilterAbs] = useState(true);
-  const [filterValue, setFilterValue] = useState<string>("");
+  const [filters, setFilters] = useState<ActiveFilter[]>([
+    { id: 1, key: "total_pnl", op: "gte", abs: true, value: "" }
+  ]);
+  const nextFilterId = useRef(2);
   const [sortKey, setSortKey] = useState<NumericKey>("total_pnl");
   const [sortDesc, setSortDesc] = useState(true);
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -350,8 +345,16 @@ export function App() {
     const n = v ? Number(v) : NaN;
     return Number.isFinite(n) && n > 280 ? n : 640;
   });
-  const filterInputRef = useRef<HTMLInputElement | null>(null);
-  const filterTimerRef = useRef<number | undefined>(undefined);
+
+  const addFilter = () => {
+    setFilters((prev) => [...prev, { id: nextFilterId.current++, key: "total_pnl", op: "gte", abs: true, value: "" }]);
+  };
+  const removeFilter = (id: number) => {
+    setFilters((prev) => (prev.length <= 1 ? prev : prev.filter((f) => f.id !== id)));
+  };
+  const updateFilter = (id: number, patch: Partial<ActiveFilter>) => {
+    setFilters((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  };
 
   const errorHelp = useMemo(() => {
     if (!error) return null;
@@ -393,7 +396,7 @@ export function App() {
       const res = await supabase
         .from("address_metrics")
         .select(
-          "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,position_size_cv,hhi,max_drawdown,sharpe,confidence,updated_at,details_json"
+          "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price"
         )
         .order("updated_at", { ascending: false })
         .limit(5000);
@@ -401,20 +404,7 @@ export function App() {
         setError(res.error.message);
         setRows([]);
       } else {
-        const data = ((res.data ?? []) as any[]).map((r) => {
-          const pb = r?.details_json?.positionBased;
-          return {
-            ...r,
-            current_position_value_usd:
-              typeof pb?.current_position_value_usd === "number" && Number.isFinite(pb.current_position_value_usd)
-                ? pb.current_position_value_usd
-                : null,
-            total_trades: typeof pb?.total_trades === "number" && Number.isFinite(pb.total_trades) ? pb.total_trades : null,
-            win_rate: typeof pb?.win_rate === "number" && Number.isFinite(pb.win_rate) ? pb.win_rate : null,
-            avg_trade_price:
-              typeof pb?.avg_trade_price === "number" && Number.isFinite(pb.avg_trade_price) ? pb.avg_trade_price : null
-          } as AddressMetric;
-        });
+        const data = (res.data ?? []) as AddressMetric[];
         setRows(data);
         setSelected((prev) => {
           const next: Record<string, boolean> = {};
@@ -434,18 +424,19 @@ export function App() {
   }, []);
 
   const filtered = useMemo(() => {
-    const def = FILTERS.find((d) => d.key === filterKey);
-    const threshRaw = filterValue.trim();
-    const thresh = threshRaw ? Number(threshRaw) : NaN;
-    const hasThresh = Number.isFinite(thresh);
-
     const base = rows.filter((r) => {
-      if (!hasThresh) return true;
-      const v0 = r[filterKey];
-      if (typeof v0 !== "number" || !Number.isFinite(v0)) return false;
-      const allowAbs = Boolean(def?.allowAbs);
-      const v = allowAbs && filterAbs ? Math.abs(v0) : v0;
-      return filterOp === "gte" ? v >= thresh : v <= thresh;
+      if (r.confidence === "skipped_low_pnl") return false;
+      return filters.every((f) => {
+        const threshRaw = f.value.trim();
+        const thresh = threshRaw ? Number(threshRaw) : NaN;
+        if (!Number.isFinite(thresh)) return true;
+        const v0 = r[f.key];
+        if (typeof v0 !== "number" || !Number.isFinite(v0)) return false;
+        const def = FILTERS.find((d) => d.key === f.key);
+        const allowAbs = Boolean(def?.allowAbs);
+        const v = allowAbs && f.abs ? Math.abs(v0) : v0;
+        return f.op === "gte" ? v >= thresh : v <= thresh;
+      });
     });
     const key = sortKey;
     base.sort((a, b) => {
@@ -460,7 +451,7 @@ export function App() {
       return sortDesc ? (an > bn ? -1 : 1) : an < bn ? -1 : 1;
     });
     return base;
-  }, [rows, filterAbs, filterKey, filterOp, filterValue, sortKey, sortDesc]);
+  }, [rows, filters, sortKey, sortDesc]);
 
   const selectedRows = useMemo(() => {
     return rows.filter((r) => selected[r.address]);
@@ -481,7 +472,7 @@ export function App() {
     <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial", padding: 16, maxWidth: 1600, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h2 style={{ margin: 0 }}>PolySport 看板</h2>
-        <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <div style={{ fontSize: 12, color: "#666" }}>{loadingRows ? "加载数据…" : `${rows.length} 地址`}</div>
           <button
             onClick={() => refreshAll()}
@@ -489,6 +480,26 @@ export function App() {
           >
             刷新
           </button>
+          {user ? (
+            <>
+              <span style={{ fontSize: 12, color: "#333" }}>
+                {user.email}{isAdmin ? <span style={{ marginLeft: 4, color: "#d4a017", fontWeight: 600 }}>管理员</span> : null}
+              </span>
+              <button
+                onClick={signOut}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+              >
+                登出
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={signInWithGoogle}
+              style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+            >
+              Google 登录
+            </button>
+          )}
         </div>
       </div>
 
@@ -550,42 +561,55 @@ export function App() {
               <div style={{ fontWeight: 600 }}>地址列表（可勾选）</div>
               <div style={{ fontSize: 12, color: "#666" }}>已选 {selectedRows.length}</div>
             </div>
-            <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <select
-                value={filterKey}
-                onChange={(e) => setFilterKey(e.target.value as NumericKey)}
-                style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              {filters.map((f) => (
+                <div key={f.id} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    value={f.key}
+                    onChange={(e) => updateFilter(f.id, { key: e.target.value as NumericKey })}
+                    style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+                  >
+                    {FILTERS.map((fd) => (
+                      <option key={fd.key} value={fd.key}>{fd.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={f.op}
+                    onChange={(e) => updateFilter(f.id, { op: e.target.value as FilterOp })}
+                    style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+                  >
+                    <option value="gte">≥</option>
+                    <option value="lte">≤</option>
+                  </select>
+                  {FILTERS.find((fd) => fd.key === f.key)?.allowAbs ? (
+                    <label style={{ fontSize: 12, color: "#666" }}>
+                      <input type="checkbox" checked={f.abs} onChange={(e) => updateFilter(f.id, { abs: e.target.checked })} /> |x|
+                    </label>
+                  ) : null}
+                  <input
+                    value={f.value}
+                    onChange={(e) => updateFilter(f.id, { value: e.target.value })}
+                    placeholder="阈值"
+                    style={{ width: 100, padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd" }}
+                  />
+                  {filters.length > 1 ? (
+                    <button
+                      onClick={() => removeFilter(f.id)}
+                      style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", color: "#999" }}
+                    >
+                      ✕
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              <button
+                onClick={addFilter}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", alignSelf: "flex-start", color: "#2d6cdf" }}
               >
-                {FILTERS.map((f) => (
-                  <option key={f.key} value={f.key}>
-                    筛选：{f.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filterOp}
-                onChange={(e) => setFilterOp(e.target.value as FilterOp)}
-                style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
-              >
-                <option value="gte">≥</option>
-                <option value="lte">≤</option>
-              </select>
-              {FILTERS.find((f) => f.key === filterKey)?.allowAbs ? (
-                <label style={{ fontSize: 12, color: "#666" }}>
-                  <input type="checkbox" checked={filterAbs} onChange={(e) => setFilterAbs(e.target.checked)} /> 取绝对值
-                </label>
-              ) : null}
-              <input
-                ref={filterInputRef}
-                defaultValue={filterValue}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (filterTimerRef.current) window.clearTimeout(filterTimerRef.current);
-                  filterTimerRef.current = window.setTimeout(() => setFilterValue(v), 250);
-                }}
-                placeholder="阈值（留空=不过滤）"
-                style={{ width: 160, padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd" }}
-              />
+                + 添加筛选条件
+              </button>
+            </div>
+            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <select
                 value={sortKey}
                 onChange={(e) => setSortKey(e.target.value as NumericKey)}
@@ -639,8 +663,6 @@ export function App() {
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>PF</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>MDD</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Sharpe</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>HHI</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>CV</th>
                 </tr>
               </thead>
               <tbody>
@@ -665,6 +687,33 @@ export function App() {
                       >
                         {r.address}
                       </a>
+                      {tags[r.address] ? (
+                        <span style={{
+                          marginLeft: 6,
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          color: "#fff",
+                          background: tags[r.address] === "顶尖" ? "#d4a017" : tags[r.address] === "高手" ? "#2d6cdf" : "#d34b4b"
+                        }}>
+                          {tags[r.address]}
+                        </span>
+                      ) : null}
+                      {isAdmin ? (
+                        <select
+                          value={tags[r.address] ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTag(r.address, v === "" ? null : v as TagValue, user!.email!);
+                          }}
+                          style={{ marginLeft: 6, fontSize: 10, padding: "1px 4px", borderRadius: 4, border: "1px solid #ddd" }}
+                        >
+                          <option value="">无标签</option>
+                          <option value="顶尖">顶尖</option>
+                          <option value="高手">高手</option>
+                          <option value="排除">排除</option>
+                        </select>
+                      ) : null}
                     </td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.current_position_value_usd, 2)}</td>
@@ -677,13 +726,11 @@ export function App() {
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.profit_factor, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.max_drawdown)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.sharpe, 2)}</td>
-                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.hhi, 4)}</td>
-                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.position_size_cv, 2)}</td>
                   </tr>
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={14} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={13} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>

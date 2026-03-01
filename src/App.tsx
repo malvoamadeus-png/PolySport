@@ -519,19 +519,22 @@ export function App() {
         </div>
       ) : null}
 
-      {lastRun ? (
-        <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-            <div style={{ fontWeight: 600 }}>
-              最新主控结果 #{lastRun.id} <span style={{ marginLeft: 8, fontSize: 12, color: "#666" }}>{lastRun.created_at ?? lastRun.timestamp ?? ""}</span>
-            </div>
-            <div style={{ fontSize: 12, color: "#666" }}>{loadingRuns ? "加载中…" : lastRun.sport ?? "-"}</div>
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
-            holders: {lastRun.total_holders ?? "-"} · ok: {lastRun.successful_metrics ?? "-"} · fail: {lastRun.failed_metrics ?? "-"}
-          </div>
+      <details style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa" }}>
+        <summary style={{ fontWeight: 600, cursor: "pointer", userSelect: "none" }}>参数说明</summary>
+        <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.6, color: "#333" }}>
+          <div style={{ marginBottom: 8 }}><strong>Total PnL</strong> — 总盈亏：已实现盈亏 + 未实现盈亏</div>
+          <div style={{ marginBottom: 8 }}><strong>Realized PnL</strong> — 已实现盈亏：已平仓交易的盈亏</div>
+          <div style={{ marginBottom: 8 }}><strong>Unrealized PnL</strong> — 未实现盈亏：当前持仓的浮动盈亏</div>
+          <div style={{ marginBottom: 8 }}><strong>ROI</strong> — 投资回报率：总盈亏 / 成本基础（所有买入金额之和）</div>
+          <div style={{ marginBottom: 8 }}><strong>Profit Factor</strong> — 盈利因子：总盈利 / 总亏损（按市场聚合）</div>
+          <div style={{ marginBottom: 8 }}><strong>Max Drawdown</strong> — 最大回撤：权益曲线从峰值到谷底的最大跌幅</div>
+          <div style={{ marginBottom: 8 }}><strong>Sharpe Ratio</strong> — 夏普比率：日均盈亏 / 日盈亏标准差 × √365，衡量风险调整后收益</div>
+          <div style={{ marginBottom: 8 }}><strong>Current Value</strong> — 当前持仓价值：所有未平仓头寸的市值（美元）</div>
+          <div style={{ marginBottom: 8 }}><strong>Total Trades</strong> — 总交易数：买入 + 卖出交易笔数</div>
+          <div style={{ marginBottom: 8 }}><strong>Win Rate</strong> — 胜率：盈利交易数 / 总交易数</div>
+          <div style={{ marginBottom: 8 }}><strong>Avg Trade Price</strong> — 平均交易价格：所有交易的平均成交价</div>
         </div>
-      ) : null}
+      </details>
 
       {supabaseConfig.ok && !loadingRows && !error && rows.length === 0 ? (
         <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#fafafa", color: "#333" }}>
@@ -819,12 +822,12 @@ export function App() {
                   </div>
                 </>
               ) : (
-                <RadarChart title="指标雷达图对比" metrics={chartMetrics} rows={selectedRowsSorted.slice(0, 6)} />
+                <RadarChart title="指标雷达图对比" metrics={chartMetrics} rows={selectedRowsSorted.slice(0, 12)} />
               )}
             </div>
           ) : (
             <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-              勾选至少 2 个地址并选择至少 1 个指标后生成图表（雷达图最多显示 6 个地址）。
+              勾选至少 2 个地址并选择至少 1 个指标后生成图表（雷达图最多显示 12 个地址）。
             </div>
           )}
         </div>

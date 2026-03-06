@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseConfig } from "./supabaseClient";
 import { useAuth } from "./useAuth";
 import { useTags, type TagValue } from "./useTags";
+import { Link } from "react-router-dom";
 
 type MasterResult = {
   id: number;
@@ -393,26 +394,46 @@ export function App() {
 
     setLoadingRows(true);
     try {
-      const res = await supabase
-        .from("address_metrics")
-        .select(
-          "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price"
-        )
-        .order("updated_at", { ascending: false })
-        .limit(5000);
-      if (res.error) {
-        setError(res.error.message);
-        setRows([]);
-      } else {
-        const data = (res.data ?? []) as AddressMetric[];
-        setRows(data);
+      const pageSize = 1000;
+      const allRows: AddressMetric[] = [];
+      const selectCols =
+        "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price";
+
+      // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
+      for (let page = 0; page < 50; page += 1) {
+        const from = page * pageSize;
+        const to = from + pageSize - 1;
+        const res = await supabase
+          .from("address_metrics")
+          .select(selectCols)
+          .order("updated_at", { ascending: false })
+          .range(from, to);
+
+        if (res.error) {
+          setError(res.error.message);
+          setRows([]);
+          allRows.length = 0;
+          break;
+        }
+
+        const chunk = (res.data ?? []) as AddressMetric[];
+        allRows.push(...chunk);
+        if (chunk.length < pageSize) {
+          break;
+        }
+      }
+
+      if (allRows.length > 0) {
+        setRows(allRows);
         setSelected((prev) => {
           const next: Record<string, boolean> = {};
-          for (const r of data) {
+          for (const r of allRows) {
             if (prev[r.address]) next[r.address] = true;
           }
           return next;
         });
+      } else {
+        setRows([]);
       }
     } finally {
       setLoadingRows(false);
@@ -473,6 +494,14 @@ export function App() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h2 style={{ margin: 0 }}>PolySport 看板</h2>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {isAdmin ? (
+            <Link
+              to="/leader-attribution"
+              style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
+            >
+              打开 Leader 归因页
+            </Link>
+          ) : null}
           <div style={{ fontSize: 12, color: "#666" }}>{loadingRows ? "加载数据…" : `${rows.length} 地址`}</div>
           <button
             onClick={() => refreshAll()}

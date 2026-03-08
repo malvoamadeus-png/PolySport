@@ -30,6 +30,7 @@ type AddressMetric = {
   win_rate: number | null;
   avg_trade_price: number | null;
   confidence: string | null;
+  source_tags: string | null;
   updated_at: string | null;
 };
 
@@ -67,6 +68,50 @@ const FILTERS: FilterDef[] = [
   { key: "max_drawdown", label: "Max Drawdown", format: "pct" },
   { key: "sharpe", label: "Sharpe", format: "num" }
 ];
+
+type TagFilter = "all" | "none" | "顶尖" | "高手" | "待观察" | "排除";
+type SourceFilter = "all" | "none" | "NBA" | "CLIMATE" | "multi";
+
+const TAG_FILTER_OPTIONS: Array<{ value: TagFilter; label: string }> = [
+  { value: "all", label: "全部标签" },
+  { value: "none", label: "无标签" },
+  { value: "顶尖", label: "顶尖" },
+  { value: "高手", label: "高手" },
+  { value: "待观察", label: "待观察" },
+  { value: "排除", label: "排除" },
+];
+
+const SOURCE_FILTER_OPTIONS: Array<{ value: SourceFilter; label: string }> = [
+  { value: "all", label: "全部来源" },
+  { value: "none", label: "无来源" },
+  { value: "NBA", label: "NBA" },
+  { value: "CLIMATE", label: "CLIMATE" },
+  { value: "multi", label: "多来源(2+)" }
+];
+
+function parseSourceTags(raw: string | null | undefined): string[] {
+  if (!raw || !raw.trim()) return [];
+  const uniq = new Set<string>();
+  for (const p of raw.split(",")) {
+    const s = p.trim().toUpperCase();
+    if (s) uniq.add(s);
+  }
+  return Array.from(uniq);
+}
+
+function sourceColor(source: string): string {
+  if (source === "NBA") return "#ff7a00";
+  if (source === "CLIMATE") return "#2e9f57";
+  return "#666";
+}
+
+function tagColor(tag: TagValue | undefined) {
+  if (tag === "顶尖") return "#d4a017";
+  if (tag === "高手") return "#2d6cdf";
+  if (tag === "待观察") return "#8a6d3b";
+  if (tag === "排除") return "#d34b4b";
+  return "#999";
+}
 
 function fmtNum(v: number | null | undefined, digits = 2) {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
@@ -341,6 +386,9 @@ export function App() {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [chartType, setChartType] = useState<"bar" | "radar">("bar");
   const [metricKeys, setMetricKeys] = useState<MetricKey[]>(["total_pnl", "roi", "profit_factor", "max_drawdown", "sharpe"]);
+  const [tagFilter, setTagFilter] = useState<TagFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [showChartPanel, setShowChartPanel] = useState(true);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
     const v = window.localStorage.getItem("leftWidthPx");
     const n = v ? Number(v) : NaN;
@@ -397,7 +445,7 @@ export function App() {
       const pageSize = 1000;
       const allRows: AddressMetric[] = [];
       const selectCols =
-        "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price";
+        "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price";
 
       // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
       for (let page = 0; page < 50; page += 1) {
@@ -447,6 +495,20 @@ export function App() {
   const filtered = useMemo(() => {
     const base = rows.filter((r) => {
       if (r.confidence === "skipped_low_pnl") return false;
+      const tag = tags[r.address];
+      if (tagFilter === "none") {
+        if (tag) return false;
+      } else if (tagFilter !== "all") {
+        if (tag !== tagFilter) return false;
+      }
+      const sourceTags = parseSourceTags(r.source_tags);
+      if (sourceFilter === "none") {
+        if (sourceTags.length > 0) return false;
+      } else if (sourceFilter === "multi") {
+        if (sourceTags.length < 2) return false;
+      } else if (sourceFilter !== "all") {
+        if (!sourceTags.includes(sourceFilter)) return false;
+      }
       return filters.every((f) => {
         const threshRaw = f.value.trim();
         const thresh = threshRaw ? Number(threshRaw) : NaN;
@@ -472,7 +534,7 @@ export function App() {
       return sortDesc ? (an > bn ? -1 : 1) : an < bn ? -1 : 1;
     });
     return base;
-  }, [rows, filters, sortKey, sortDesc]);
+  }, [rows, tags, tagFilter, sourceFilter, filters, sortKey, sortDesc]);
 
   const selectedRows = useMemo(() => {
     return rows.filter((r) => selected[r.address]);
@@ -587,7 +649,7 @@ export function App() {
       ) : null}
 
       <div style={{ marginTop: 12, display: "flex", gap: 0, alignItems: "stretch" }}>
-        <div style={{ width: leftWidth, border: "1px solid #eee", borderRadius: 8, background: "#fff" }}>
+        <div style={{ width: showChartPanel ? leftWidth : "100%", border: "1px solid #eee", borderRadius: 8, background: "#fff" }}>
           <div style={{ padding: 12, borderBottom: "1px solid #f3f3f3" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
               <div style={{ fontWeight: 600 }}>地址列表（可勾选）</div>
@@ -643,6 +705,28 @@ export function App() {
             </div>
             <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <select
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value as TagFilter)}
+                style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+              >
+                {TAG_FILTER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    标签：{o.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+                style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+              >
+                {SOURCE_FILTER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    市场来源：{o.label}
+                  </option>
+                ))}
+              </select>
+              <select
                 value={sortKey}
                 onChange={(e) => setSortKey(e.target.value as NumericKey)}
                 style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
@@ -666,6 +750,12 @@ export function App() {
                 清空勾选
               </button>
               <button
+                onClick={() => setShowChartPanel((v) => !v)}
+                style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+              >
+                {showChartPanel ? "收起对比图" : "展开对比图"}
+              </button>
+              <button
                 onClick={() => {
                   const next: Record<string, boolean> = {};
                   for (const r of filtered) next[r.address] = true;
@@ -682,19 +772,20 @@ export function App() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: "#fafafa" }}>
-                  <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee", width: 44 }}>选</th>
-                  <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>地址</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>PnL</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Value</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Trades</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Win%</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>AvgPx</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Realized</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Unrealized</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>ROI</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>PF</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>MDD</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Sharpe</th>
+                  <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee", width: 44, position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>选</th>
+                  <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>地址</th>
+                  <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>市场来源</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PnL</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Value</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Trades</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Win%</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>AvgPx</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Realized</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Unrealized</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>ROI</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PF</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>MDD</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Sharpe</th>
                 </tr>
               </thead>
               <tbody>
@@ -726,7 +817,7 @@ export function App() {
                           padding: "1px 6px",
                           borderRadius: 4,
                           color: "#fff",
-                          background: tags[r.address] === "顶尖" ? "#d4a017" : tags[r.address] === "高手" ? "#2d6cdf" : "#d34b4b"
+                          background: tagColor(tags[r.address])
                         }}>
                           {tags[r.address]}
                         </span>
@@ -743,9 +834,32 @@ export function App() {
                           <option value="">无标签</option>
                           <option value="顶尖">顶尖</option>
                           <option value="高手">高手</option>
+                          <option value="待观察">待观察</option>
                           <option value="排除">排除</option>
                         </select>
                       ) : null}
+                    </td>
+                    <td style={{ padding: 10, whiteSpace: "nowrap" }}>
+                      {parseSourceTags(r.source_tags).length ? (
+                        parseSourceTags(r.source_tags).map((s) => (
+                          <span
+                            key={`${r.address}-${s}`}
+                            style={{
+                              marginRight: 6,
+                              fontSize: 10,
+                              padding: "1px 6px",
+                              borderRadius: 4,
+                              color: "#fff",
+                              background: sourceColor(s)
+                            }}
+                            title={`市场来源: ${s}`}
+                          >
+                            {s}
+                          </span>
+                        ))
+                      ) : (
+                        <span style={{ color: "#999", fontSize: 11 }}>-</span>
+                      )}
                     </td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.current_position_value_usd, 2)}</td>
@@ -762,7 +876,7 @@ export function App() {
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={13} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={14} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>
@@ -772,94 +886,98 @@ export function App() {
           </div>
         </div>
 
-        <div
-          onMouseDown={(e) => {
-            e.preventDefault();
-            const startX = e.clientX;
-            const startW = leftWidth;
-            let currentW = startW;
-            const onMove = (ev: MouseEvent) => {
-              const dx = ev.clientX - startX;
-              const next = Math.max(360, Math.min(1200, startW + dx));
-              currentW = next;
-              setLeftWidth(next);
-            };
-            const onUp = () => {
-              window.removeEventListener("mousemove", onMove);
-              window.removeEventListener("mouseup", onUp);
-              window.localStorage.setItem("leftWidthPx", String(currentW));
-            };
-            window.addEventListener("mousemove", onMove);
-            window.addEventListener("mouseup", onUp);
-          }}
-          style={{ width: 10, cursor: "col-resize", margin: "0 8px", borderRadius: 6, background: "#f3f3f3", flex: "0 0 auto" }}
-          role="separator"
-          aria-label="resize"
-        />
+        {showChartPanel ? (
+          <>
+            <div
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = leftWidth;
+                let currentW = startW;
+                const onMove = (ev: MouseEvent) => {
+                  const dx = ev.clientX - startX;
+                  const next = Math.max(360, Math.min(1200, startW + dx));
+                  currentW = next;
+                  setLeftWidth(next);
+                };
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                  window.localStorage.setItem("leftWidthPx", String(currentW));
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
+              style={{ width: 10, cursor: "col-resize", margin: "0 8px", borderRadius: 6, background: "#f3f3f3", flex: "0 0 auto" }}
+              role="separator"
+              aria-label="resize"
+            />
 
-        <div style={{ flex: "1 1 auto", border: "1px solid #eee", borderRadius: 8, padding: 12, background: "#fff", minWidth: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-            <div style={{ fontWeight: 600 }}>对比图</div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <label style={{ fontSize: 12, color: "#666" }}>
-                <input type="radio" checked={chartType === "bar"} onChange={() => setChartType("bar")} /> 柱状图
-              </label>
-              <label style={{ fontSize: 12, color: "#666" }}>
-                <input type="radio" checked={chartType === "radar"} onChange={() => setChartType("radar")} /> 雷达图
-              </label>
-            </div>
-          </div>
+            <div style={{ flex: "1 1 auto", border: "1px solid #eee", borderRadius: 8, padding: 12, background: "#fff", minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                <div style={{ fontWeight: 600 }}>对比图</div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <label style={{ fontSize: 12, color: "#666" }}>
+                    <input type="radio" checked={chartType === "bar"} onChange={() => setChartType("bar")} /> 柱状图
+                  </label>
+                  <label style={{ fontSize: 12, color: "#666" }}>
+                    <input type="radio" checked={chartType === "radar"} onChange={() => setChartType("radar")} /> 雷达图
+                  </label>
+                </div>
+              </div>
 
-          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>指标：</div>
-            {METRICS.map((m) => {
-              const checked = metricKeys.includes(m.key);
-              return (
-                <label key={m.key} style={{ fontSize: 12, color: "#333" }}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(e) => {
-                      const on = e.target.checked;
-                      setMetricKeys((prev) => {
-                        const s = new Set(prev);
-                        if (on) s.add(m.key);
-                        else s.delete(m.key);
-                        return Array.from(s);
-                      });
-                    }}
-                  />{" "}
-                  {m.label}
-                </label>
-              );
-            })}
-          </div>
+              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                <div style={{ fontSize: 12, color: "#666" }}>指标：</div>
+                {METRICS.map((m) => {
+                  const checked = metricKeys.includes(m.key);
+                  return (
+                    <label key={m.key} style={{ fontSize: 12, color: "#333" }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setMetricKeys((prev) => {
+                            const s = new Set(prev);
+                            if (on) s.add(m.key);
+                            else s.delete(m.key);
+                            return Array.from(s);
+                          });
+                        }}
+                      />{" "}
+                      {m.label}
+                    </label>
+                  );
+                })}
+              </div>
 
-          {selectedRowsSorted.length >= 2 && chartMetrics.length ? (
-            <div style={{ marginTop: 12 }}>
-              {chartType === "bar" ? (
-                <>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {chartMetrics.map((m) => (
-                      <BarChart
-                        key={m.key}
-                        title={`${m.label} 对比`}
-                        metric={m}
-                        data={selectedRowsSorted.map((r) => ({ label: r.address, value: r[m.key] }))}
-                      />
-                    ))}
-                  </div>
-                </>
+              {selectedRowsSorted.length >= 2 && chartMetrics.length ? (
+                <div style={{ marginTop: 12 }}>
+                  {chartType === "bar" ? (
+                    <>
+                      <div style={{ display: "grid", gap: 12 }}>
+                        {chartMetrics.map((m) => (
+                          <BarChart
+                            key={m.key}
+                            title={`${m.label} 对比`}
+                            metric={m}
+                            data={selectedRowsSorted.map((r) => ({ label: r.address, value: r[m.key] }))}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <RadarChart title="指标雷达图对比" metrics={chartMetrics} rows={selectedRowsSorted.slice(0, 12)} />
+                  )}
+                </div>
               ) : (
-                <RadarChart title="指标雷达图对比" metrics={chartMetrics} rows={selectedRowsSorted.slice(0, 12)} />
+                <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
+                  勾选至少 2 个地址并选择至少 1 个指标后生成图表（雷达图最多显示 12 个地址）。
+                </div>
               )}
             </div>
-          ) : (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-              勾选至少 2 个地址并选择至少 1 个指标后生成图表（雷达图最多显示 12 个地址）。
-            </div>
-          )}
-        </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

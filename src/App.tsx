@@ -389,6 +389,7 @@ export function App() {
   const [tagFilter, setTagFilter] = useState<TagFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [showChartPanel, setShowChartPanel] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(300);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
     const v = window.localStorage.getItem("leftWidthPx");
     const n = v ? Number(v) : NaN;
@@ -416,6 +417,18 @@ export function App() {
     }
     return null;
   }, [error]);
+
+  const filterDefByKey = useMemo(() => {
+    const m = new Map<NumericKey, FilterDef>();
+    for (const fd of FILTERS) m.set(fd.key, fd);
+    return m;
+  }, []);
+
+  const sourceTagsByAddress = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const r of rows) out[r.address] = parseSourceTags(r.source_tags);
+    return out;
+  }, [rows]);
 
   const refreshAll = async () => {
     if (!supabase) return;
@@ -501,7 +514,7 @@ export function App() {
       } else if (tagFilter !== "all") {
         if (tag !== tagFilter) return false;
       }
-      const sourceTags = parseSourceTags(r.source_tags);
+      const sourceTags = sourceTagsByAddress[r.address] ?? [];
       if (sourceFilter === "none") {
         if (sourceTags.length > 0) return false;
       } else if (sourceFilter === "multi") {
@@ -515,7 +528,7 @@ export function App() {
         if (!Number.isFinite(thresh)) return true;
         const v0 = r[f.key];
         if (typeof v0 !== "number" || !Number.isFinite(v0)) return false;
-        const def = FILTERS.find((d) => d.key === f.key);
+        const def = filterDefByKey.get(f.key);
         const allowAbs = Boolean(def?.allowAbs);
         const v = allowAbs && f.abs ? Math.abs(v0) : v0;
         return f.op === "gte" ? v >= thresh : v <= thresh;
@@ -534,7 +547,15 @@ export function App() {
       return sortDesc ? (an > bn ? -1 : 1) : an < bn ? -1 : 1;
     });
     return base;
-  }, [rows, tags, tagFilter, sourceFilter, filters, sortKey, sortDesc]);
+  }, [rows, tags, tagFilter, sourceFilter, filters, sortKey, sortDesc, sourceTagsByAddress, filterDefByKey]);
+
+  useEffect(() => {
+    setVisibleCount(300);
+  }, [filters, tagFilter, sourceFilter, sortKey, sortDesc, rows.length]);
+
+  const visibleRows = useMemo(() => {
+    return filtered.slice(0, visibleCount);
+  }, [filtered, visibleCount]);
 
   const selectedRows = useMemo(() => {
     return rows.filter((r) => selected[r.address]);
@@ -653,7 +674,7 @@ export function App() {
           <div style={{ padding: 12, borderBottom: "1px solid #f3f3f3" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
               <div style={{ fontWeight: 600 }}>地址列表（可勾选）</div>
-              <div style={{ fontSize: 12, color: "#666" }}>已选 {selectedRows.length}</div>
+              <div style={{ fontSize: 12, color: "#666" }}>已选 {selectedRows.length} / 显示 {visibleRows.length} / 命中 {filtered.length}</div>
             </div>
             <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
               {filters.map((f) => (
@@ -789,7 +810,7 @@ export function App() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {visibleRows.map((r) => (
                   <tr key={r.address} style={{ borderBottom: "1px solid #f3f3f3" }}>
                     <td style={{ padding: 10, textAlign: "center" }}>
                       <input
@@ -840,8 +861,8 @@ export function App() {
                       ) : null}
                     </td>
                     <td style={{ padding: 10, whiteSpace: "nowrap" }}>
-                      {parseSourceTags(r.source_tags).length ? (
-                        parseSourceTags(r.source_tags).map((s) => (
+                      {(sourceTagsByAddress[r.address] ?? []).length ? (
+                        (sourceTagsByAddress[r.address] ?? []).map((s) => (
                           <span
                             key={`${r.address}-${s}`}
                             style={{
@@ -883,6 +904,16 @@ export function App() {
                 ) : null}
               </tbody>
             </table>
+            {filtered.length > visibleRows.length ? (
+              <div style={{ padding: 10, borderTop: "1px solid #f3f3f3", background: "#fff" }}>
+                <button
+                  onClick={() => setVisibleCount((v) => Math.min(filtered.length, v + 300))}
+                  style={{ fontSize: 12, padding: "6px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
+                >
+                  加载更多（+300）
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 

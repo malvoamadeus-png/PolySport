@@ -25,6 +25,22 @@ type LeaderMarketRow = {
   updated_at: string | null;
 };
 
+type AddressMetricLite = {
+  address: string;
+  total_pnl: number | null;
+  roi: number | null;
+  profit_factor: number | null;
+  max_drawdown: number | null;
+  sharpe: number | null;
+  win_rate: number | null;
+  avg_trade_price: number | null;
+  winning_trades: number | null;
+  losing_trades: number | null;
+  confidence: string | null;
+  source_tags: string | null;
+  updated_at: string | null;
+};
+
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
   return v.toLocaleString(undefined, { maximumFractionDigits: digits });
@@ -58,6 +74,7 @@ export function CopytradeLeaderPnlApp() {
   const [error, setError] = useState<string | null>(null);
   const [summaryRows, setSummaryRows] = useState<LeaderSummary[]>([]);
   const [marketRows, setMarketRows] = useState<LeaderMarketRow[]>([]);
+  const [metricsByAddress, setMetricsByAddress] = useState<Record<string, AddressMetricLite>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [addressFilter, setAddressFilter] = useState("");
   const [minTotalPnl, setMinTotalPnl] = useState("");
@@ -84,10 +101,36 @@ export function CopytradeLeaderPnlApp() {
       ]);
       setSummaryRows(summary);
       setMarketRows(markets);
+      const leaderAddresses = Array.from(
+        new Set(
+          summary
+            .map((r) => (r.leader_address || "").toLowerCase().trim())
+            .filter((v) => !!v)
+        )
+      );
+      if (leaderAddresses.length > 0) {
+        const mres = await supabase
+          .from("address_metrics")
+          .select("address,total_pnl,roi,profit_factor,max_drawdown,sharpe,win_rate,avg_trade_price,winning_trades,losing_trades,confidence,source_tags,updated_at")
+          .in("address", leaderAddresses);
+        if (mres.error) {
+          throw new Error(mres.error.message);
+        }
+        const mm: Record<string, AddressMetricLite> = {};
+        for (const row of (mres.data ?? []) as AddressMetricLite[]) {
+          const k = (row.address || "").toLowerCase().trim();
+          if (!k) continue;
+          mm[k] = row;
+        }
+        setMetricsByAddress(mm);
+      } else {
+        setMetricsByAddress({});
+      }
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setSummaryRows([]);
       setMarketRows([]);
+      setMetricsByAddress({});
     } finally {
       setLoading(false);
     }
@@ -189,10 +232,16 @@ export function CopytradeLeaderPnlApp() {
             <tr style={{ background: "#fafafa" }}>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Leader 地址</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>总盈亏</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>地址总PnL</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>已实现</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>未实现</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>胜率</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>题目数</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>ROI</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>PF</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>MDD</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>Sharpe</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>AvgPx</th>
             </tr>
           </thead>
           <tbody>
@@ -200,6 +249,7 @@ export function CopytradeLeaderPnlApp() {
               const k = (r.leader_address || "").toLowerCase();
               const isOpen = Boolean(expanded[k]);
               const markets = marketsByLeader[k] ?? [];
+              const metric = metricsByAddress[k];
               return (
                 <React.Fragment key={k}>
                   <tr
@@ -208,21 +258,40 @@ export function CopytradeLeaderPnlApp() {
                   >
                     <td style={{ padding: 10 }}>
                       <span style={{ marginRight: 6 }}>{isOpen ? "▾" : "▸"}</span>
-                      {r.leader_address}
+                      <a
+                        href={`https://polymarket.com/profile/${r.leader_address}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "#1a4fff", textDecoration: "none" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {r.leader_address}
+                      </a>
                     </td>
                     <td style={{ padding: 10, textAlign: "right", color: (r.total_pnl ?? 0) >= 0 ? "#1f7a1f" : "#b02a2a" }}>
                       {fmtNum(r.total_pnl, 2)}
+                    </td>
+                    <td style={{ padding: 10, textAlign: "right", color: (metric?.total_pnl ?? 0) >= 0 ? "#1f7a1f" : "#b02a2a" }}>
+                      {fmtNum(metric?.total_pnl, 2)}
                     </td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_realized_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_unrealized_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_markets, 0)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(metric?.roi)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(metric?.profit_factor, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(metric?.max_drawdown)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(metric?.sharpe, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(metric?.avg_trade_price, 4)}</td>
                   </tr>
 
                   {isOpen ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: 0, background: "#fcfcfc", borderBottom: "1px solid #f3f3f3" }}>
+                      <td colSpan={12} style={{ padding: 0, background: "#fcfcfc", borderBottom: "1px solid #f3f3f3" }}>
                         <div style={{ padding: 10 }}>
+                          <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+                            来源标签: {metric?.source_tags || "-"} | 指标更新时间: {metric?.updated_at || "-"}
+                          </div>
                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                             <thead>
                               <tr>
@@ -266,7 +335,7 @@ export function CopytradeLeaderPnlApp() {
 
             {!filteredSummary.length ? (
               <tr>
-                <td colSpan={6} style={{ padding: 12, color: "#666" }}>
+                <td colSpan={12} style={{ padding: 12, color: "#666" }}>
                   暂无数据
                 </td>
               </tr>

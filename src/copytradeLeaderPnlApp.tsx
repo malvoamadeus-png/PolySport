@@ -25,6 +25,24 @@ type LeaderMarketRow = {
   updated_at: string | null;
 };
 
+type DailyEquity = {
+  date_key: string;
+  total_equity: number | null;
+  total_realized_pnl: number | null;
+  total_unrealized_pnl: number | null;
+  total_cost_basis: number | null;
+  open_position_count: number | null;
+};
+
+type DailyLeaderPnl = {
+  date_key: string;
+  leader_address: string;
+  realized_pnl: number | null;
+  unrealized_pnl: number | null;
+  total_pnl: number | null;
+  market_count: number | null;
+};
+
 type AddressMetricLite = {
   address: string;
   total_pnl: number | null;
@@ -69,6 +87,76 @@ async function fetchAllRows<T>(table: string, selectCols: string, orderBy: strin
   return out;
 }
 
+function DailyLeaderPnlTable({ data }: { data: DailyLeaderPnl[] }) {
+  if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无 Leader 每日盈亏数据</div>;
+  // 按日期倒序，最多显示最近 7 天 × 所有 leader
+  const sorted = [...data].sort((a, b) => b.date_key.localeCompare(a.date_key));
+  const dates = Array.from(new Set(sorted.map((r) => r.date_key))).slice(0, 7);
+  const shown = sorted.filter((r) => dates.includes(r.date_key));
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <thead>
+        <tr style={{ background: "#fafafa" }}>
+          <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #eee" }}>日期</th>
+          <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #eee" }}>Leader</th>
+          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>已实现</th>
+          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>未实现</th>
+          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>总PnL</th>
+          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>题目数</th>
+        </tr>
+      </thead>
+      <tbody>
+        {shown.map((r) => (
+          <tr key={`${r.date_key}-${r.leader_address}`} style={{ borderBottom: "1px solid #f5f5f5" }}>
+            <td style={{ padding: 8 }}>{r.date_key}</td>
+            <td style={{ padding: 8 }}>{r.leader_address}</td>
+            <td style={{ padding: 8, textAlign: "right" }}>{fmtNum(r.realized_pnl, 2)}</td>
+            <td style={{ padding: 8, textAlign: "right" }}>{fmtNum(r.unrealized_pnl, 2)}</td>
+            <td style={{ padding: 8, textAlign: "right", color: (r.total_pnl ?? 0) >= 0 ? "#1f7a1f" : "#b02a2a" }}>
+              {fmtNum(r.total_pnl, 2)}
+            </td>
+            <td style={{ padding: 8, textAlign: "right" }}>{fmtNum(r.market_count, 0)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function EquityChart({ data }: { data: DailyEquity[] }) {
+  if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无每日净值数据</div>;
+  const W = 700, H = 200, PX = 48, PY = 20;
+  const vals = data.map((d) => d.total_equity ?? 0);
+  const minV = Math.min(...vals, 0);
+  const maxV = Math.max(...vals, 0);
+  const range = maxV - minV || 1;
+  const xStep = data.length > 1 ? (W - PX * 2) / (data.length - 1) : 0;
+  const toX = (i: number) => PX + i * xStep;
+  const toY = (v: number) => PY + (1 - (v - minV) / range) * (H - PY * 2);
+  const pts = vals.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
+  const zeroY = toY(0);
+  // show ~5 date labels
+  const labelStep = Math.max(1, Math.floor(data.length / 5));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: W, height: "auto" }}>
+      <line x1={PX} y1={zeroY} x2={W - PX} y2={zeroY} stroke="#ccc" strokeDasharray="4" />
+      <polyline fill="none" stroke="#2d6cdf" strokeWidth={2} points={pts} />
+      {vals.map((v, i) => (
+        <circle key={i} cx={toX(i)} cy={toY(v)} r={3} fill={v >= 0 ? "#1f7a1f" : "#b02a2a"} />
+      ))}
+      {data.map((d, i) =>
+        i % labelStep === 0 ? (
+          <text key={i} x={toX(i)} y={H - 2} textAnchor="middle" fontSize={9} fill="#888">
+            {d.date_key.slice(5)}
+          </text>
+        ) : null
+      )}
+      <text x={2} y={toY(maxV) + 4} fontSize={9} fill="#666">{fmtNum(maxV, 1)}</text>
+      <text x={2} y={toY(minV) + 4} fontSize={9} fill="#666">{fmtNum(minV, 1)}</text>
+    </svg>
+  );
+}
+
 export function CopytradeLeaderPnlApp() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +164,8 @@ export function CopytradeLeaderPnlApp() {
   const [marketRows, setMarketRows] = useState<LeaderMarketRow[]>([]);
   const [metricsByAddress, setMetricsByAddress] = useState<Record<string, AddressMetricLite>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dailyEquity, setDailyEquity] = useState<DailyEquity[]>([]);
+  const [dailyLeaderPnl, setDailyLeaderPnl] = useState<DailyLeaderPnl[]>([]);
   const [addressFilter, setAddressFilter] = useState("");
   const [minTotalPnl, setMinTotalPnl] = useState("");
   const [minWinRate, setMinWinRate] = useState("");
@@ -99,6 +189,22 @@ export function CopytradeLeaderPnlApp() {
           false
         ),
       ]);
+      const [equity, leaderDaily] = await Promise.all([
+        fetchAllRows<DailyEquity>(
+          "copytrade_daily_equity",
+          "date_key,total_equity,total_realized_pnl,total_unrealized_pnl,total_cost_basis,open_position_count",
+          "date_key",
+          true
+        ),
+        fetchAllRows<DailyLeaderPnl>(
+          "copytrade_daily_leader_pnl",
+          "date_key,leader_address,realized_pnl,unrealized_pnl,total_pnl,market_count",
+          "date_key",
+          false
+        ),
+      ]);
+      setDailyEquity(equity);
+      setDailyLeaderPnl(leaderDaily);
       setSummaryRows(summary);
       setMarketRows(markets);
       const leaderAddresses = Array.from(
@@ -131,6 +237,8 @@ export function CopytradeLeaderPnlApp() {
       setSummaryRows([]);
       setMarketRows([]);
       setMetricsByAddress({});
+      setDailyEquity([]);
+      setDailyLeaderPnl([]);
     } finally {
       setLoading(false);
     }
@@ -224,6 +332,16 @@ export function CopytradeLeaderPnlApp() {
             style={{ width: 140, padding: "6px 8px", borderRadius: 6, border: "1px solid #ddd" }}
           />
         </div>
+      </div>
+
+      <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>每日净值曲线</div>
+        <EquityChart data={dailyEquity} />
+      </div>
+
+      <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12, overflow: "auto" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Leader 每日盈亏（近 7 天）</div>
+        <DailyLeaderPnlTable data={dailyLeaderPnl} />
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", overflow: "auto" }}>

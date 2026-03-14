@@ -92,8 +92,13 @@ const SOURCE_FILTER_OPTIONS: Array<{ value: SourceFilter; label: string }> = [
 function parseSourceTags(raw: string | null | undefined): string[] {
   if (!raw || !raw.trim()) return [];
   const uniq = new Set<string>();
+  const normalize = (v: string): string => {
+    const s = v.trim().toUpperCase();
+    if (s === "CHAMPIONS LEAGUE" || s === "UEFA CHAMPIONS LEAGUE") return "UCL";
+    return s;
+  };
   for (const p of raw.split(",")) {
-    const s = p.trim().toUpperCase();
+    const s = normalize(p);
     if (s) uniq.add(s);
   }
   return Array.from(uniq);

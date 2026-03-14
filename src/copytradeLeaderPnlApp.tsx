@@ -25,14 +25,7 @@ type LeaderMarketRow = {
   updated_at: string | null;
 };
 
-type DailyEquity = {
-  date_key: string;
-  total_equity: number | null;
-  total_realized_pnl: number | null;
-  total_unrealized_pnl: number | null;
-  total_cost_basis: number | null;
-  open_position_count: number | null;
-};
+type PnlCurvePoint = { t: number; p: number };
 
 type DailyLeaderPnl = {
   date_key: string;
@@ -87,73 +80,125 @@ async function fetchAllRows<T>(table: string, selectCols: string, orderBy: strin
   return out;
 }
 
+const PNL_CURVE_URL = "https://user-pnl-api.polymarket.com/user-pnl";
+const FUNDER_ADDRESS = "0x5f39d698C8B1f2efadB1042a3C6085E82ae3d603";
+
+async function fetchPnlCurve(): Promise<PnlCurvePoint[]> {
+  const res = await fetch(`${PNL_CURVE_URL}?user_address=${FUNDER_ADDRESS}&interval=all&fidelity=12h`);
+  if (!res.ok) return [];
+  const data: unknown = await res.json();
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter((r: any) => typeof r?.t === "number" && typeof r?.p === "number")
+    .map((r: any) => ({ t: r.t as number, p: r.p as number }));
+}
+
 function DailyLeaderPnlTable({ data }: { data: DailyLeaderPnl[] }) {
   if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无 Leader 每日盈亏数据</div>;
-  // 按日期倒序，最多显示最近 7 天 × 所有 leader
-  const sorted = [...data].sort((a, b) => b.date_key.localeCompare(a.date_key));
-  const dates = Array.from(new Set(sorted.map((r) => r.date_key))).slice(0, 7);
-  const shown = sorted.filter((r) => dates.includes(r.date_key));
+  // 数据是每天的累计 total_pnl，需要算日间 delta
+  const dates = Array.from(new Set(data.map((r) => r.date_key))).sort();
+  // cumMap: leader -> date -> cumulative total_pnl
+  const cumMap = new Map<string, Map<string, number>>();
+  for (const r of data) {
+    const addr = r.leader_address;
+    if (!cumMap.has(addr)) cumMap.set(addr, new Map());
+    cumMap.get(addr)!.set(r.date_key, r.total_pnl ?? 0);
+  }
+  // deltaMap: leader -> date -> daily delta
+  const deltaMap = new Map<string, Map<string, number>>();
+  const grandTotal = new Map<string, number>();
+  for (const [addr, dayMap] of cumMap) {
+    const dm = new Map<string, number>();
+    deltaMap.set(addr, dm);
+    let sumDelta = 0;
+    for (let i = 0; i < dates.length; i++) {
+      const cum = dayMap.get(dates[i]) ?? 0;
+      const prev = i > 0 ? (dayMap.get(dates[i - 1]) ?? 0) : 0;
+      const delta = cum - prev;
+      dm.set(dates[i], delta);
+      sumDelta += delta;
+    }
+    grandTotal.set(addr, sumDelta);
+  }
+  const leaders = Array.from(deltaMap.keys()).sort((a, b) => (grandTotal.get(b) ?? 0) - (grandTotal.get(a) ?? 0));
+  const shortAddr = (a: string) => a.length > 12 ? `${a.slice(0, 6)}...${a.slice(-4)}` : a;
+  const pnlColor = (v: number) => (v >= 0 ? "#1f7a1f" : "#b02a2a");
+  const cellStyle = { padding: "6px 8px", textAlign: "right" as const, borderBottom: "1px solid #f5f5f5", fontSize: 11 };
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ background: "#fafafa" }}>
-          <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #eee" }}>日期</th>
-          <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid #eee" }}>Leader</th>
-          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>已实现</th>
-          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>未实现</th>
-          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>总PnL</th>
-          <th style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #eee" }}>题目数</th>
+          <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #eee", position: "sticky", left: 0, background: "#fafafa", zIndex: 1 }}>Leader</th>
+          {dates.map((d) => (
+            <th key={d} style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>{d.slice(5)}</th>
+          ))}
+          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>总计</th>
         </tr>
       </thead>
       <tbody>
-        {shown.map((r) => (
-          <tr key={`${r.date_key}-${r.leader_address}`} style={{ borderBottom: "1px solid #f5f5f5" }}>
-            <td style={{ padding: 8 }}>{r.date_key}</td>
-            <td style={{ padding: 8 }}>{r.leader_address}</td>
-            <td style={{ padding: 8, textAlign: "right" }}>{fmtNum(r.realized_pnl, 2)}</td>
-            <td style={{ padding: 8, textAlign: "right" }}>{fmtNum(r.unrealized_pnl, 2)}</td>
-            <td style={{ padding: 8, textAlign: "right", color: (r.total_pnl ?? 0) >= 0 ? "#1f7a1f" : "#b02a2a" }}>
-              {fmtNum(r.total_pnl, 2)}
-            </td>
-            <td style={{ padding: 8, textAlign: "right" }}>{fmtNum(r.market_count, 0)}</td>
-          </tr>
-        ))}
+        {leaders.map((addr) => {
+          const row = deltaMap.get(addr)!;
+          const total = grandTotal.get(addr) ?? 0;
+          return (
+            <tr key={addr}>
+              <td style={{ padding: "6px 8px", borderBottom: "1px solid #f5f5f5", position: "sticky", left: 0, background: "#fff", zIndex: 1 }} title={addr}>
+                <a href={`https://polymarket.com/profile/${addr}`} target="_blank" rel="noreferrer" style={{ color: "#1a4fff", textDecoration: "none", fontSize: 11 }}>{shortAddr(addr)}</a>
+              </td>
+              {dates.map((d) => {
+                const v = row.get(d) ?? 0;
+                return <td key={d} style={{ ...cellStyle, color: pnlColor(v) }}>{v === 0 ? "-" : fmtNum(v, 2)}</td>;
+              })}
+              <td style={{ ...cellStyle, fontWeight: 700, color: pnlColor(total) }}>{fmtNum(total, 2)}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
 }
 
-function EquityChart({ data }: { data: DailyEquity[] }) {
-  if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无每日净值数据</div>;
-  const W = 700, H = 200, PX = 48, PY = 20;
-  const vals = data.map((d) => d.total_equity ?? 0);
-  const minV = Math.min(...vals, 0);
-  const maxV = Math.max(...vals, 0);
-  const range = maxV - minV || 1;
-  const xStep = data.length > 1 ? (W - PX * 2) / (data.length - 1) : 0;
-  const toX = (i: number) => PX + i * xStep;
-  const toY = (v: number) => PY + (1 - (v - minV) / range) * (H - PY * 2);
-  const pts = vals.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
-  const zeroY = toY(0);
-  // show ~5 date labels
-  const labelStep = Math.max(1, Math.floor(data.length / 5));
+function DailyPnlTable({ data }: { data: PnlCurvePoint[] }) {
+  if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无净值数据</div>;
+  const byDay = new Map<string, number>();
+  for (const pt of data) {
+    const d = new Date(pt.t * 1000);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    byDay.set(key, pt.p);
+  }
+  const allDays = Array.from(byDay.keys()).sort();
+  const rows = allDays.map((day, i) => {
+    const cum = byDay.get(day)!;
+    const prev = i > 0 ? byDay.get(allDays[i - 1])! : 0;
+    return { day, delta: cum - prev, cumulative: cum };
+  });
+  const recent = rows.slice(-7);
+  const pnlColor = (v: number) => (v >= 0 ? "#1f7a1f" : "#b02a2a");
+  const cellStyle = { padding: "6px 8px", textAlign: "right" as const, borderBottom: "1px solid #f5f5f5", fontSize: 11 };
+  const totalDelta = recent.reduce((s, r) => s + r.delta, 0);
+  const lastCum = recent.length ? recent[recent.length - 1].cumulative : 0;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: W, height: "auto" }}>
-      <line x1={PX} y1={zeroY} x2={W - PX} y2={zeroY} stroke="#ccc" strokeDasharray="4" />
-      <polyline fill="none" stroke="#2d6cdf" strokeWidth={2} points={pts} />
-      {vals.map((v, i) => (
-        <circle key={i} cx={toX(i)} cy={toY(v)} r={3} fill={v >= 0 ? "#1f7a1f" : "#b02a2a"} />
-      ))}
-      {data.map((d, i) =>
-        i % labelStep === 0 ? (
-          <text key={i} x={toX(i)} y={H - 2} textAnchor="middle" fontSize={9} fill="#888">
-            {d.date_key.slice(5)}
-          </text>
-        ) : null
-      )}
-      <text x={2} y={toY(maxV) + 4} fontSize={9} fill="#666">{fmtNum(maxV, 1)}</text>
-      <text x={2} y={toY(minV) + 4} fontSize={9} fill="#666">{fmtNum(minV, 1)}</text>
-    </svg>
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <thead>
+        <tr style={{ background: "#fafafa" }}>
+          <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #eee" }}></th>
+          {recent.map((r) => (
+            <th key={r.day} style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>{r.day.slice(5)}</th>
+          ))}
+          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>7日合计</th>
+          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>累计PnL</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style={{ padding: "6px 8px", borderBottom: "1px solid #f5f5f5", fontWeight: 600 }}>当日收益</td>
+          {recent.map((r) => (
+            <td key={r.day} style={{ ...cellStyle, color: pnlColor(r.delta) }}>{r.delta >= 0 ? "+" : ""}{fmtNum(r.delta, 2)}</td>
+          ))}
+          <td style={{ ...cellStyle, fontWeight: 700, color: pnlColor(totalDelta) }}>{totalDelta >= 0 ? "+" : ""}{fmtNum(totalDelta, 2)}</td>
+          <td style={{ ...cellStyle, fontWeight: 700, color: pnlColor(lastCum) }}>{fmtNum(lastCum, 2)}</td>
+        </tr>
+      </tbody>
+    </table>
   );
 }
 
@@ -164,8 +209,8 @@ export function CopytradeLeaderPnlApp() {
   const [marketRows, setMarketRows] = useState<LeaderMarketRow[]>([]);
   const [metricsByAddress, setMetricsByAddress] = useState<Record<string, AddressMetricLite>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [dailyEquity, setDailyEquity] = useState<DailyEquity[]>([]);
   const [dailyLeaderPnl, setDailyLeaderPnl] = useState<DailyLeaderPnl[]>([]);
+  const [pnlCurve, setPnlCurve] = useState<PnlCurvePoint[]>([]);
   const [addressFilter, setAddressFilter] = useState("");
   const [minTotalPnl, setMinTotalPnl] = useState("");
   const [minWinRate, setMinWinRate] = useState("");
@@ -189,13 +234,8 @@ export function CopytradeLeaderPnlApp() {
           false
         ),
       ]);
-      const [equity, leaderDaily] = await Promise.all([
-        fetchAllRows<DailyEquity>(
-          "copytrade_daily_equity",
-          "date_key,total_equity,total_realized_pnl,total_unrealized_pnl,total_cost_basis,open_position_count",
-          "date_key",
-          true
-        ),
+      const [curve, leaderDaily] = await Promise.all([
+        fetchPnlCurve(),
         fetchAllRows<DailyLeaderPnl>(
           "copytrade_daily_leader_pnl",
           "date_key,leader_address,realized_pnl,unrealized_pnl,total_pnl,market_count",
@@ -203,7 +243,7 @@ export function CopytradeLeaderPnlApp() {
           false
         ),
       ]);
-      setDailyEquity(equity);
+      setPnlCurve(curve);
       setDailyLeaderPnl(leaderDaily);
       setSummaryRows(summary);
       setMarketRows(markets);
@@ -237,7 +277,7 @@ export function CopytradeLeaderPnlApp() {
       setSummaryRows([]);
       setMarketRows([]);
       setMetricsByAddress({});
-      setDailyEquity([]);
+      setPnlCurve([]);
       setDailyLeaderPnl([]);
     } finally {
       setLoading(false);
@@ -335,8 +375,8 @@ export function CopytradeLeaderPnlApp() {
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>每日净值曲线</div>
-        <EquityChart data={dailyEquity} />
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>账户每日收益（官方 PnL API）</div>
+        <DailyPnlTable data={pnlCurve} />
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12, overflow: "auto" }}>

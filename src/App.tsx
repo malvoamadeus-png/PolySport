@@ -96,6 +96,7 @@ function parseSourceTags(raw: string | null | undefined): string[] {
   const normalize = (v: string): string => {
     const s = v.trim().toUpperCase();
     if (s === "CHAMPIONS LEAGUE" || s === "UEFA CHAMPIONS LEAGUE") return "UCL";
+    if (s === "LEAGUE OF LEGENDS") return "LOL";
     return s;
   };
   for (const p of raw.split(",")) {

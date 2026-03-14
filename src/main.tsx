@@ -4,6 +4,7 @@ import { App } from "./App";
 import { CopytradeLeaderPnlApp } from "./copytradeLeaderPnlApp";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./useAuth";
+import { Analytics } from "@vercel/analytics/react";
 
 function AdminOnlyRoute(props: { children: React.ReactNode }) {
   const { user, isAdmin, loading, signInWithGoogle } = useAuth();
@@ -48,6 +49,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <Analytics />
     </BrowserRouter>
   </React.StrictMode>
 );

@@ -69,7 +69,7 @@ const FILTERS: FilterDef[] = [
   { key: "sharpe", label: "Sharpe", format: "num" }
 ];
 
-type TagFilter = "all" | "none" | "顶尖" | "高手" | "待观察" | "排除";
+type TagFilter = "all" | "none" | "顶尖" | "高手" | "特殊策略" | "待观察" | "排除";
 type SourceFilter = "all" | "none" | "NBA" | "CLIMATE" | "multi";
 
 const TAG_FILTER_OPTIONS: Array<{ value: TagFilter; label: string }> = [
@@ -77,6 +77,7 @@ const TAG_FILTER_OPTIONS: Array<{ value: TagFilter; label: string }> = [
   { value: "none", label: "无标签" },
   { value: "顶尖", label: "顶尖" },
   { value: "高手", label: "高手" },
+  { value: "特殊策略", label: "特殊策略" },
   { value: "待观察", label: "待观察" },
   { value: "排除", label: "排除" },
 ];
@@ -113,6 +114,7 @@ function sourceColor(source: string): string {
 function tagColor(tag: TagValue | undefined) {
   if (tag === "顶尖") return "#d4a017";
   if (tag === "高手") return "#2d6cdf";
+  if (tag === "特殊策略") return "#9b59b6";
   if (tag === "待观察") return "#8a6d3b";
   if (tag === "排除") return "#d34b4b";
   return "#999";
@@ -393,7 +395,7 @@ export function App() {
   const [metricKeys, setMetricKeys] = useState<MetricKey[]>(["total_pnl", "roi", "profit_factor", "max_drawdown", "sharpe"]);
   const [tagFilter, setTagFilter] = useState<TagFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [showChartPanel, setShowChartPanel] = useState(true);
+  const [showChartPanel, setShowChartPanel] = useState(false);
   const [visibleCount, setVisibleCount] = useState(300);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
     const v = window.localStorage.getItem("leftWidthPx");
@@ -860,29 +862,31 @@ export function App() {
                           <option value="">无标签</option>
                           <option value="顶尖">顶尖</option>
                           <option value="高手">高手</option>
+                          <option value="特殊策略">特殊策略</option>
                           <option value="待观察">待观察</option>
                           <option value="排除">排除</option>
                         </select>
                       ) : null}
                     </td>
-                    <td style={{ padding: 10, whiteSpace: "nowrap" }}>
+                    <td style={{ padding: 10 }}>
                       {(sourceTagsByAddress[r.address] ?? []).length ? (
-                        (sourceTagsByAddress[r.address] ?? []).map((s) => (
-                          <span
-                            key={`${r.address}-${s}`}
-                            style={{
-                              marginRight: 6,
-                              fontSize: 10,
-                              padding: "1px 6px",
-                              borderRadius: 4,
-                              color: "#fff",
-                              background: sourceColor(s)
-                            }}
-                            title={`市场来源: ${s}`}
-                          >
-                            {s}
-                          </span>
-                        ))
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {(sourceTagsByAddress[r.address] ?? []).map((s) => (
+                            <span
+                              key={`${r.address}-${s}`}
+                              style={{
+                                fontSize: 10,
+                                padding: "1px 6px",
+                                borderRadius: 4,
+                                color: "#fff",
+                                background: sourceColor(s)
+                              }}
+                              title={`市场来源: ${s}`}
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
                       ) : (
                         <span style={{ color: "#999", fontSize: 11 }}>-</span>
                       )}

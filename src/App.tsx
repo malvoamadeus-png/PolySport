@@ -516,6 +516,8 @@ export function App() {
   const filtered = useMemo(() => {
     const base = rows.filter((r) => {
       if (r.confidence === "skipped_low_pnl") return false;
+      // 额外保险：确保 |PnL| >= 50000
+      if (typeof r.total_pnl === "number" && Math.abs(r.total_pnl) < 50000) return false;
       const tag = tags[r.address];
       if (tagFilter === "none") {
         if (tag) return false;

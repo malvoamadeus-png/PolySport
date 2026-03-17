@@ -270,13 +270,71 @@ function PerMarketTable({ rows }: { rows: PerMarketRow[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Leader Summary Table (overview mode)
+// ---------------------------------------------------------------------------
+
+function LeaderSummaryTable({
+  rows,
+  onSelect,
+}: {
+  rows: GapAnalysisRow[];
+  onSelect: (addr: string) => void;
+}) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: "#f5f5f5", textAlign: "left" }}>
+            <th style={{ padding: "8px 10px" }}>Leader</th>
+            <th style={{ padding: "8px 10px", textAlign: "right" }}>我方PnL</th>
+            <th style={{ padding: "8px 10px", textAlign: "right" }}>Leader PnL</th>
+            <th style={{ padding: "8px 10px", textAlign: "right" }}>差距</th>
+            <th style={{ padding: "8px 10px", textAlign: "right" }}>生成时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const gap = r.total_gap_usd ?? 0;
+            return (
+              <tr
+                key={r.leader_address}
+                onClick={() => onSelect(r.leader_address)}
+                style={{ borderBottom: "1px solid #eee", cursor: "pointer" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f7ff")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+              >
+                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontSize: 12 }}>
+                  {r.leader_address.slice(0, 10)}...{r.leader_address.slice(-6)}
+                </td>
+                <td style={{ padding: "6px 10px", textAlign: "right", color: (r.our_total_pnl ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" }}>
+                  ${fmtNum(r.our_total_pnl)}
+                </td>
+                <td style={{ padding: "6px 10px", textAlign: "right", color: (r.leader_pnl_on_copied ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" }}>
+                  ${fmtNum(r.leader_pnl_on_copied)}
+                </td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: gap >= 0 ? "#2e7d32" : "#d32f2f" }}>
+                  ${fmtNum(gap)}
+                </td>
+                <td style={{ padding: "6px 10px", textAlign: "right", fontSize: 11, color: "#888" }}>
+                  {r.generated_at ? new Date(r.generated_at).toLocaleDateString() : "-"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 
 export function GapAnalysisApp() {
   const [rows, setRows] = useState<GapAnalysisRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<string>("");
+  const [selectedLeader, setSelectedLeader] = useState<string | null>(null);
   const [showMarkets, setShowMarkets] = useState(false);
 
   useEffect(() => {
@@ -289,14 +347,21 @@ export function GapAnalysisApp() {
       .then(({ data, error }) => {
         if (error) console.error(error);
         setRows((data ?? []) as GapAnalysisRow[]);
-        if (data && data.length > 0) setSelected(data[0].leader_address);
         setLoading(false);
       });
   }, []);
 
+  const aggregateStats = useMemo(() => {
+    if (!rows.length) return null;
+    const totalGap = rows.reduce((s, r) => s + (r.total_gap_usd ?? 0), 0);
+    const totalOurPnl = rows.reduce((s, r) => s + (r.our_total_pnl ?? 0), 0);
+    const totalLeaderPnl = rows.reduce((s, r) => s + (r.leader_pnl_on_copied ?? 0), 0);
+    return { totalGap, avgGap: totalGap / rows.length, totalOurPnl, totalLeaderPnl, count: rows.length };
+  }, [rows]);
+
   const current = useMemo(
-    () => rows.find((r) => r.leader_address === selected),
-    [rows, selected]
+    () => rows.find((r) => r.leader_address === selectedLeader),
+    [rows, selectedLeader]
   );
 
   const factors = useMemo(() => parseJson<FactorResult>(current?.factors_json ?? null), [current]);
@@ -315,7 +380,7 @@ export function GapAnalysisApp() {
   if (!rows.length) return (
     <div style={{ padding: 16, fontFamily: "system-ui" }}>
       <Link to="/leader-attribution" style={{ fontSize: 13, color: "#1976d2" }}>← 归因面板</Link>
-      <p style={{ marginTop: 12, color: "#888" }}>暂无差距分析数据。请先运行: python -m copytrade.analyze_gap --leader 0x... --save-db</p>
+      <p style={{ marginTop: 12, color: "#888" }}>暂无差距分析数据。请先运行: python -m copytrade.analyze_gap --all --sync</p>
     </div>
   );
 
@@ -326,28 +391,49 @@ export function GapAnalysisApp() {
         <h2 style={{ margin: 0, fontSize: 18 }}>跟单差距归因分析</h2>
       </div>
 
-      {/* Leader selector */}
-      <div style={{ marginBottom: 12 }}>
-        <select
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          style={{ padding: "4px 8px", fontSize: 13, borderRadius: 4, border: "1px solid #ccc" }}
-        >
-          {rows.map((r) => (
-            <option key={r.leader_address} value={r.leader_address}>
-              {r.leader_address.slice(0, 10)}...{r.leader_address.slice(-6)} (差距: ${fmtNum(r.total_gap_usd)})
-            </option>
-          ))}
-        </select>
-        {current?.generated_at && (
-          <span style={{ marginLeft: 12, fontSize: 11, color: "#888" }}>
-            生成于: {new Date(current.generated_at).toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {current && (
+      {selectedLeader === null ? (
         <>
+          {/* Aggregate stat cards */}
+          {aggregateStats && (
+            <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+              {[
+                { label: "Leader 数", value: aggregateStats.count, fmt: (v: number) => String(v), color: "#333" },
+                { label: "我方总PnL", value: aggregateStats.totalOurPnl, fmt: (v: number) => `$${fmtNum(v)}`, color: aggregateStats.totalOurPnl >= 0 ? "#2e7d32" : "#d32f2f" },
+                { label: "Leader总PnL", value: aggregateStats.totalLeaderPnl, fmt: (v: number) => `$${fmtNum(v)}`, color: aggregateStats.totalLeaderPnl >= 0 ? "#2e7d32" : "#d32f2f" },
+                { label: "总差距", value: aggregateStats.totalGap, fmt: (v: number) => `$${fmtNum(v)}`, color: "#d32f2f" },
+                { label: "平均差距", value: aggregateStats.avgGap, fmt: (v: number) => `$${fmtNum(v)}`, color: "#d32f2f" },
+              ].map((c, i) => (
+                <div key={i} style={{ background: "#f9f9f9", border: "1px solid #e0e0e0", borderRadius: 8, padding: "8px 16px", minWidth: 120 }}>
+                  <div style={{ fontSize: 11, color: "#888" }}>{c.label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: c.color }}>{c.fmt(c.value)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Leader summary table */}
+          <LeaderSummaryTable rows={rows} onSelect={setSelectedLeader} />
+        </>
+      ) : current ? (
+        <>
+          {/* Back button + leader address */}
+          <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+            <span
+              onClick={() => { setSelectedLeader(null); setShowMarkets(false); }}
+              style={{ fontSize: 13, color: "#1976d2", cursor: "pointer" }}
+            >
+              ← 返回总览
+            </span>
+            <span style={{ fontFamily: "monospace", fontSize: 13 }}>
+              {current.leader_address.slice(0, 10)}...{current.leader_address.slice(-6)}
+            </span>
+            {current.generated_at && (
+              <span style={{ fontSize: 11, color: "#888" }}>
+                生成于: {new Date(current.generated_at).toLocaleString()}
+              </span>
+            )}
+          </div>
+
           {/* Summary cards */}
           <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
             {[
@@ -389,7 +475,7 @@ export function GapAnalysisApp() {
             {showMarkets && <PerMarketTable rows={perMarket} />}
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

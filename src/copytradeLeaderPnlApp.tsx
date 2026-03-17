@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 type LeaderSummary = {
   leader_address: string;
+  account_name: string | null;
   total_realized_pnl: number | null;
   total_unrealized_pnl: number | null;
   total_pnl: number | null;
@@ -17,6 +18,7 @@ type LeaderSummary = {
 type LeaderMarketRow = {
   leader_address: string;
   condition_id: string;
+  account_name: string | null;
   market_slug: string | null;
   total_realized_pnl: number | null;
   total_unrealized_pnl: number | null;
@@ -30,6 +32,7 @@ type PnlCurvePoint = { t: number; p: number };
 type DailyLeaderPnl = {
   date_key: string;
   leader_address: string;
+  account_name: string | null;
   realized_pnl: number | null;
   unrealized_pnl: number | null;
   total_pnl: number | null;
@@ -214,6 +217,7 @@ export function CopytradeLeaderPnlApp() {
   const [addressFilter, setAddressFilter] = useState("");
   const [minTotalPnl, setMinTotalPnl] = useState("");
   const [minWinRate, setMinWinRate] = useState("");
+  const [accountFilter, setAccountFilter] = useState("");
 
   const refresh = async () => {
     if (!supabase) return;
@@ -223,13 +227,13 @@ export function CopytradeLeaderPnlApp() {
       const [summary, markets] = await Promise.all([
         fetchAllRows<LeaderSummary>(
           "copytrade_leader_summary",
-          "leader_address,total_realized_pnl,total_unrealized_pnl,total_pnl,winning_markets,losing_markets,total_markets,win_rate,updated_at",
+          "leader_address,account_name,total_realized_pnl,total_unrealized_pnl,total_pnl,winning_markets,losing_markets,total_markets,win_rate,updated_at",
           "total_pnl",
           false
         ),
         fetchAllRows<LeaderMarketRow>(
           "copytrade_leader_market_pnl",
-          "leader_address,condition_id,market_slug,total_realized_pnl,total_unrealized_pnl,total_pnl,market_result,updated_at",
+          "leader_address,condition_id,account_name,market_slug,total_realized_pnl,total_unrealized_pnl,total_pnl,market_result,updated_at",
           "total_pnl",
           false
         ),
@@ -238,7 +242,7 @@ export function CopytradeLeaderPnlApp() {
         fetchPnlCurve(),
         fetchAllRows<DailyLeaderPnl>(
           "copytrade_daily_leader_pnl",
-          "date_key,leader_address,realized_pnl,unrealized_pnl,total_pnl,market_count",
+          "date_key,leader_address,account_name,realized_pnl,unrealized_pnl,total_pnl,market_count",
           "date_key",
           false
         ),
@@ -288,9 +292,27 @@ export function CopytradeLeaderPnlApp() {
     void refresh();
   }, []);
 
+  const accountNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const r of summaryRows) {
+      names.add(r.account_name || "default");
+    }
+    return Array.from(names).sort();
+  }, [summaryRows]);
+
+  const filteredMarketRows = useMemo(() => {
+    if (!accountFilter) return marketRows;
+    return marketRows.filter((r) => (r.account_name || "default") === accountFilter);
+  }, [marketRows, accountFilter]);
+
+  const filteredDailyLeaderPnl = useMemo(() => {
+    if (!accountFilter) return dailyLeaderPnl;
+    return dailyLeaderPnl.filter((r) => (r.account_name || "default") === accountFilter);
+  }, [dailyLeaderPnl, accountFilter]);
+
   const marketsByLeader = useMemo(() => {
     const m: Record<string, LeaderMarketRow[]> = {};
-    for (const row of marketRows) {
+    for (const row of filteredMarketRows) {
       const k = (row.leader_address || "").toLowerCase();
       if (!k) continue;
       if (!m[k]) m[k] = [];
@@ -300,13 +322,14 @@ export function CopytradeLeaderPnlApp() {
       m[k].sort((a, b) => (b.total_pnl ?? 0) - (a.total_pnl ?? 0));
     }
     return m;
-  }, [marketRows]);
+  }, [filteredMarketRows]);
 
   const filteredSummary = useMemo(() => {
     const keyword = addressFilter.trim().toLowerCase();
     const minPnl = minTotalPnl.trim() ? Number(minTotalPnl) : NaN;
     const minWr = minWinRate.trim() ? Number(minWinRate) : NaN;
     return summaryRows.filter((r) => {
+      if (accountFilter && (r.account_name || "default") !== accountFilter) return false;
       if (keyword && !(r.leader_address || "").toLowerCase().includes(keyword)) return false;
       if (Number.isFinite(minPnl) && typeof r.total_pnl === "number" && r.total_pnl < minPnl) return false;
       if (Number.isFinite(minPnl) && typeof r.total_pnl !== "number") return false;
@@ -316,7 +339,7 @@ export function CopytradeLeaderPnlApp() {
       }
       return true;
     });
-  }, [summaryRows, addressFilter, minTotalPnl, minWinRate]);
+  }, [summaryRows, addressFilter, minTotalPnl, minWinRate, accountFilter]);
 
   return (
     <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial", padding: 16, maxWidth: 1600, margin: "0 auto" }}>
@@ -359,6 +382,18 @@ export function CopytradeLeaderPnlApp() {
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {accountNames.length > 1 && (
+            <select
+              value={accountFilter}
+              onChange={(e) => setAccountFilter(e.target.value)}
+              style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #ddd", fontSize: 12 }}
+            >
+              <option value="">全部账号</option>
+              {accountNames.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          )}
           <input
             value={addressFilter}
             onChange={(e) => setAddressFilter(e.target.value)}
@@ -387,7 +422,7 @@ export function CopytradeLeaderPnlApp() {
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12, overflow: "auto" }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Leader 每日盈亏（近 7 天）</div>
-        <DailyLeaderPnlTable data={dailyLeaderPnl} />
+        <DailyLeaderPnlTable data={filteredDailyLeaderPnl} />
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", overflow: "auto" }}>
@@ -395,6 +430,9 @@ export function CopytradeLeaderPnlApp() {
           <thead>
             <tr style={{ background: "#fafafa" }}>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Leader 地址</th>
+              {accountNames.length > 1 && !accountFilter && (
+                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>账号</th>
+              )}
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>总盈亏</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>地址总PnL</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>已实现</th>
@@ -411,14 +449,17 @@ export function CopytradeLeaderPnlApp() {
           <tbody>
             {filteredSummary.map((r) => {
               const k = (r.leader_address || "").toLowerCase();
-              const isOpen = Boolean(expanded[k]);
+              const rowKey = `${k}_${r.account_name || "default"}`;
+              const isOpen = Boolean(expanded[rowKey]);
               const markets = marketsByLeader[k] ?? [];
               const metric = metricsByAddress[k];
+              const showAcctCol = accountNames.length > 1 && !accountFilter;
+              const colSpan = showAcctCol ? 13 : 12;
               return (
-                <React.Fragment key={k}>
+                <React.Fragment key={rowKey}>
                   <tr
                     style={{ borderBottom: "1px solid #f3f3f3", cursor: "pointer" }}
-                    onClick={() => setExpanded((prev) => ({ ...prev, [k]: !prev[k] }))}
+                    onClick={() => setExpanded((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }))}
                   >
                     <td style={{ padding: 10 }}>
                       <span style={{ marginRight: 6 }}>{isOpen ? "▾" : "▸"}</span>
@@ -432,6 +473,9 @@ export function CopytradeLeaderPnlApp() {
                         {r.leader_address}
                       </a>
                     </td>
+                    {showAcctCol && (
+                      <td style={{ padding: 10, fontSize: 11, color: "#555" }}>{r.account_name || "default"}</td>
+                    )}
                     <td style={{ padding: 10, textAlign: "right", color: (r.total_pnl ?? 0) >= 0 ? "#1f7a1f" : "#b02a2a" }}>
                       {fmtNum(r.total_pnl, 2)}
                     </td>
@@ -451,7 +495,7 @@ export function CopytradeLeaderPnlApp() {
 
                   {isOpen ? (
                     <tr>
-                      <td colSpan={12} style={{ padding: 0, background: "#fcfcfc", borderBottom: "1px solid #f3f3f3" }}>
+                      <td colSpan={colSpan} style={{ padding: 0, background: "#fcfcfc", borderBottom: "1px solid #f3f3f3" }}>
                         <div style={{ padding: 10 }}>
                           <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
                             来源标签: {metric?.source_tags || "-"} | 指标更新时间: {metric?.updated_at || "-"}
@@ -499,7 +543,7 @@ export function CopytradeLeaderPnlApp() {
 
             {!filteredSummary.length ? (
               <tr>
-                <td colSpan={12} style={{ padding: 12, color: "#666" }}>
+                <td colSpan={accountNames.length > 1 && !accountFilter ? 13 : 12} style={{ padding: 12, color: "#666" }}>
                   暂无数据
                 </td>
               </tr>

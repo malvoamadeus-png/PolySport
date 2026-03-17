@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import type { User } from "@supabase/supabase-js";
 
-const ADMIN_EMAIL = "malvoamadeus@gmail.com";
+const ADMIN_EMAILS = ["malvoamadeus@gmail.com", "mandywang8866@gmail.com"];
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -41,7 +41,7 @@ export function useAuth() {
     supabase?.auth.signOut();
   };
 
-  const isAdmin = user?.email === ADMIN_EMAIL;
+  const isAdmin = ADMIN_EMAILS.includes(user?.email ?? "");
 
   return { user, isAdmin, loading, signInWithGoogle, signOut };
 }

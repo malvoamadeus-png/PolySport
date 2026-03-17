@@ -29,6 +29,8 @@ type AddressMetric = {
   total_trades: number | null;
   win_rate: number | null;
   avg_trade_price: number | null;
+  ulcer_index: number | null;
+  equity_r2: number | null;
   confidence: string | null;
   source_tags: string | null;
   updated_at: string | null;
@@ -47,6 +49,8 @@ type NumericKey = keyof Pick<
   | "total_trades"
   | "win_rate"
   | "avg_trade_price"
+  | "ulcer_index"
+  | "equity_r2"
 >;
 
 type FilterOp = "gte" | "lte";
@@ -142,6 +146,8 @@ type MetricKey = keyof Pick<
   | "total_trades"
   | "win_rate"
   | "avg_trade_price"
+  | "ulcer_index"
+  | "equity_r2"
 >;
 
 type MetricDef = {
@@ -161,7 +167,9 @@ const METRICS: MetricDef[] = [
   { key: "current_position_value_usd", label: "Current Value", scale: "linear", better: "high", format: "num" },
   { key: "total_trades", label: "Total Trades", scale: "linear", better: "high", format: "num" },
   { key: "win_rate", label: "Win Rate", scale: "linear", better: "high", format: "pct" },
-  { key: "avg_trade_price", label: "Avg Trade Price", scale: "linear", better: "high", format: "num" }
+  { key: "avg_trade_price", label: "Avg Trade Price", scale: "linear", better: "high", format: "num" },
+  { key: "ulcer_index", label: "Ulcer Index", scale: "linear", better: "low", format: "num" },
+  { key: "equity_r2", label: "R²", scale: "linear", better: "high", format: "num" },
 ];
 
 function fmtMetric(def: MetricDef, v: number | null | undefined) {
@@ -466,7 +474,7 @@ export function App() {
       const pageSize = 1000;
       const allRows: AddressMetric[] = [];
       const selectCols =
-        "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price";
+        "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,ulcer_index,equity_r2";
 
       // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
       for (let page = 0; page < 50; page += 1) {

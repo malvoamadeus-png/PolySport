@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { CopytradeLeaderPnlApp } from "./copytradeLeaderPnlApp";
+import { GapAnalysisApp } from "./copytradeGapAnalysis";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./useAuth";
 import { Analytics } from "@vercel/analytics/react";
@@ -44,6 +45,14 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           element={
             <AdminOnlyRoute>
               <CopytradeLeaderPnlApp />
+            </AdminOnlyRoute>
+          }
+        />
+        <Route
+          path="/gap-analysis"
+          element={
+            <AdminOnlyRoute>
+              <GapAnalysisApp />
             </AdminOnlyRoute>
           }
         />

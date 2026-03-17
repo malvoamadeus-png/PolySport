@@ -329,6 +329,12 @@ export function CopytradeLeaderPnlApp() {
           >
             返回 Dashboard
           </Link>
+          <Link
+            to="/gap-analysis"
+            style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
+          >
+            差距归因分析
+          </Link>
           <div style={{ fontSize: 12, color: "#666" }}>{loading ? "加载中..." : `地址数 ${summaryRows.length}`}</div>
           <button
             onClick={() => refresh()}

@@ -70,7 +70,9 @@ const FILTERS: FilterDef[] = [
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
   { key: "max_drawdown", label: "Max Drawdown", format: "pct" },
-  { key: "sharpe", label: "Sharpe", format: "num" }
+  { key: "sharpe", label: "Sharpe", format: "num" },
+  { key: "ulcer_index", label: "Ulcer Index", format: "num" },
+  { key: "equity_r2", label: "R²", format: "num" },
 ];
 
 type TagFilter = "all" | "none" | "顶尖" | "高手" | "特殊策略" | "待观察" | "排除";
@@ -663,6 +665,8 @@ export function App() {
           <div style={{ marginBottom: 8 }}><strong>Total Trades</strong> — 总交易数：买入 + 卖出交易笔数</div>
           <div style={{ marginBottom: 8 }}><strong>Win Rate</strong> — 胜率：盈利交易数 / 总交易数</div>
           <div style={{ marginBottom: 8 }}><strong>Avg Trade Price</strong> — 平均交易价格：所有交易的平均成交价</div>
+          <div style={{ marginBottom: 8 }}><strong>Ulcer Index (UI)</strong> — 溃疡指数：衡量回撤深度和持续时间的综合惩罚，值越低越好</div>
+          <div style={{ marginBottom: 8 }}><strong>R²</strong> — 决定系数：净值曲线与完美直线的拟合度，越接近 1 说明盈利越稳定</div>
         </div>
       </details>
 
@@ -825,6 +829,8 @@ export function App() {
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PF</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>MDD</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Sharpe</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>UI</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>R²</th>
                 </tr>
               </thead>
               <tbody>
@@ -913,11 +919,13 @@ export function App() {
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.profit_factor, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.max_drawdown)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.sharpe, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.ulcer_index, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.equity_r2, 4)}</td>
                   </tr>
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={14} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={16} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>

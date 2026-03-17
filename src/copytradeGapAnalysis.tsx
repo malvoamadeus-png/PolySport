@@ -76,21 +76,20 @@ type WaterfallItem = {
 };
 
 function buildWaterfallData(
-  leaderPnl: number,
+  ourPnl: number,
   factors: FactorResult[],
-  ourPnl: number
 ): WaterfallItem[] {
   const items: WaterfallItem[] = [];
-  // Start bar: leader PnL on copied markets
+  // Start bar: our actual PnL
   items.push({
-    label: "Leader 归一化PnL",
-    value: leaderPnl,
+    label: "我方实际PnL",
+    value: ourPnl,
     cumStart: 0,
-    cumEnd: leaderPnl,
+    cumEnd: ourPnl,
     isTotal: true,
   });
 
-  let cum = leaderPnl;
+  let cum = ourPnl;
   for (const f of factors) {
     if (f.gap_usd === 0) continue;
     const start = cum;
@@ -103,12 +102,12 @@ function buildWaterfallData(
     });
   }
 
-  // End bar: our actual PnL
+  // End bar: theoretical max PnL
   items.push({
-    label: "我方实际PnL",
-    value: ourPnl,
+    label: "理论最大PnL",
+    value: cum,
     cumStart: 0,
-    cumEnd: ourPnl,
+    cumEnd: cum,
     isTotal: true,
   });
 
@@ -287,14 +286,14 @@ function LeaderSummaryTable({
           <tr style={{ background: "#f5f5f5", textAlign: "left" }}>
             <th style={{ padding: "8px 10px" }}>Leader</th>
             <th style={{ padding: "8px 10px", textAlign: "right" }}>我方PnL</th>
-            <th style={{ padding: "8px 10px", textAlign: "right" }}>Leader PnL</th>
-            <th style={{ padding: "8px 10px", textAlign: "right" }}>差距</th>
+            <th style={{ padding: "8px 10px", textAlign: "right" }}>优化空间</th>
             <th style={{ padding: "8px 10px", textAlign: "right" }}>生成时间</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => {
-            const gap = r.total_gap_usd ?? 0;
+            const factors = parseJson<FactorResult>(r.factors_json);
+            const extra = factors.reduce((s, f) => s + f.gap_usd, 0);
             return (
               <tr
                 key={r.leader_address}
@@ -309,11 +308,8 @@ function LeaderSummaryTable({
                 <td style={{ padding: "6px 10px", textAlign: "right", color: (r.our_total_pnl ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" }}>
                   ${fmtNum(r.our_total_pnl)}
                 </td>
-                <td style={{ padding: "6px 10px", textAlign: "right", color: (r.leader_pnl_on_copied ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" }}>
-                  ${fmtNum(r.leader_pnl_on_copied)}
-                </td>
-                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: gap >= 0 ? "#2e7d32" : "#d32f2f" }}>
-                  ${fmtNum(gap)}
+                <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: extra > 0 ? "#2e7d32" : extra < 0 ? "#d32f2f" : "#666" }}>
+                  {extra >= 0 ? `+$${fmtNum(extra)}` : `-$${fmtNum(Math.abs(extra))}`}
                 </td>
                 <td style={{ padding: "6px 10px", textAlign: "right", fontSize: 11, color: "#888" }}>
                   {r.generated_at ? new Date(r.generated_at).toLocaleDateString() : "-"}
@@ -353,10 +349,13 @@ export function GapAnalysisApp() {
 
   const aggregateStats = useMemo(() => {
     if (!rows.length) return null;
-    const totalGap = rows.reduce((s, r) => s + (r.total_gap_usd ?? 0), 0);
     const totalOurPnl = rows.reduce((s, r) => s + (r.our_total_pnl ?? 0), 0);
-    const totalLeaderPnl = rows.reduce((s, r) => s + (r.leader_pnl_on_copied ?? 0), 0);
-    return { totalGap, avgGap: totalGap / rows.length, totalOurPnl, totalLeaderPnl, count: rows.length };
+    let totalExtra = 0;
+    for (const r of rows) {
+      const fs = parseJson<FactorResult>(r.factors_json);
+      totalExtra += fs.reduce((s, f) => s + f.gap_usd, 0);
+    }
+    return { totalOurPnl, totalExtra, count: rows.length };
   }, [rows]);
 
   const current = useMemo(
@@ -370,9 +369,8 @@ export function GapAnalysisApp() {
   const waterfallData = useMemo(() => {
     if (!current) return [];
     return buildWaterfallData(
-      current.leader_pnl_on_copied ?? 0,
+      current.our_total_pnl ?? 0,
       factors,
-      current.our_total_pnl ?? 0
     );
   }, [current, factors]);
 
@@ -399,9 +397,7 @@ export function GapAnalysisApp() {
               {[
                 { label: "Leader 数", value: aggregateStats.count, fmt: (v: number) => String(v), color: "#333" },
                 { label: "我方总PnL", value: aggregateStats.totalOurPnl, fmt: (v: number) => `$${fmtNum(v)}`, color: aggregateStats.totalOurPnl >= 0 ? "#2e7d32" : "#d32f2f" },
-                { label: "Leader总PnL", value: aggregateStats.totalLeaderPnl, fmt: (v: number) => `$${fmtNum(v)}`, color: aggregateStats.totalLeaderPnl >= 0 ? "#2e7d32" : "#d32f2f" },
-                { label: "总差距", value: aggregateStats.totalGap, fmt: (v: number) => `$${fmtNum(v)}`, color: "#d32f2f" },
-                { label: "平均差距", value: aggregateStats.avgGap, fmt: (v: number) => `$${fmtNum(v)}`, color: "#d32f2f" },
+                { label: "优化空间", value: aggregateStats.totalExtra, fmt: (v: number) => v >= 0 ? `+$${fmtNum(v)}` : `-$${fmtNum(Math.abs(v))}`, color: aggregateStats.totalExtra >= 0 ? "#2e7d32" : "#d32f2f" },
               ].map((c, i) => (
                 <div key={i} style={{ background: "#f9f9f9", border: "1px solid #e0e0e0", borderRadius: 8, padding: "8px 16px", minWidth: 120 }}>
                   <div style={{ fontSize: 11, color: "#888" }}>{c.label}</div>
@@ -436,22 +432,25 @@ export function GapAnalysisApp() {
 
           {/* Summary cards */}
           <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            {[
-              { label: "我方总PnL", value: current.our_total_pnl, color: (current.our_total_pnl ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" },
-              { label: "Leader归一化PnL", value: current.leader_pnl_on_copied, color: (current.leader_pnl_on_copied ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" },
-              { label: "总差距", value: current.total_gap_usd, color: "#d32f2f" },
-            ].map((c, i) => (
-              <div key={i} style={{ background: "#f9f9f9", border: "1px solid #e0e0e0", borderRadius: 8, padding: "8px 16px", minWidth: 140 }}>
-                <div style={{ fontSize: 11, color: "#888" }}>{c.label}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: c.color }}>${fmtNum(c.value)}</div>
-              </div>
-            ))}
+            {(() => {
+              const extra = factors.reduce((s, f) => s + f.gap_usd, 0);
+              return [
+                { label: "我方实际PnL", value: current.our_total_pnl, fmt: (v: number) => `$${fmtNum(v)}`, color: (current.our_total_pnl ?? 0) >= 0 ? "#2e7d32" : "#d32f2f" },
+                { label: "优化空间", value: extra, fmt: (v: number) => v >= 0 ? `+$${fmtNum(v)}` : `-$${fmtNum(Math.abs(v))}`, color: extra >= 0 ? "#2e7d32" : "#d32f2f" },
+                { label: "理论最大PnL", value: (current.our_total_pnl ?? 0) + extra, fmt: (v: number) => `$${fmtNum(v)}`, color: ((current.our_total_pnl ?? 0) + extra) >= 0 ? "#2e7d32" : "#d32f2f" },
+              ].map((c, i) => (
+                <div key={i} style={{ background: "#f9f9f9", border: "1px solid #e0e0e0", borderRadius: 8, padding: "8px 16px", minWidth: 140 }}>
+                  <div style={{ fontSize: 11, color: "#888" }}>{c.label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: c.color }}>{c.fmt(c.value)}</div>
+                </div>
+              ));
+            })()}
           </div>
 
           {/* Waterfall chart */}
           {waterfallData.length > 0 && (
             <div style={{ marginBottom: 16 }}>
-              <h3 style={{ fontSize: 14, margin: "0 0 8px" }}>差距瀑布图</h3>
+              <h3 style={{ fontSize: 14, margin: "0 0 8px" }}>优化空间瀑布图</h3>
               <WaterfallChart data={waterfallData} />
             </div>
           )}

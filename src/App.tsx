@@ -523,8 +523,14 @@ export function App() {
     void refreshAll();
   }, []);
 
+  // 黑名单地址：不在前端展示
+  const BLACKLISTED_ADDRESSES = new Set([
+    "0xa5ef39c3d3e10d0b270233af41cac69796b12966",
+  ]);
+
   const filtered = useMemo(() => {
     const base = rows.filter((r) => {
+      if (BLACKLISTED_ADDRESSES.has(r.address.toLowerCase())) return false;
       if (r.confidence === "skipped_low_pnl") return false;
       // 额外保险：只保留 PnL >= 50000（但如果 total_pnl 为 null 则保留）
       if (typeof r.total_pnl === "number" && Number.isFinite(r.total_pnl) && r.total_pnl < 50000) return false;

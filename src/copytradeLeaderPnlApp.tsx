@@ -345,7 +345,7 @@ export function CopytradeLeaderPnlApp() {
         <h2 style={{ margin: 0 }}>Copytrade Leader 归因看板</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <Link to="/" style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}>返回 Dashboard</Link>
-          <Link to="/gap-analysis" style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}>差距归因分析</Link>
+          <Link to="/gap-analysis" style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}>跟单分析</Link>
           <div style={{ fontSize: 12, color: "#666" }}>{loading ? "加载中..." : `共 ${summaryRows.length} 条`}</div>
           <button onClick={() => refresh()} style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}>刷新</button>
         </div>

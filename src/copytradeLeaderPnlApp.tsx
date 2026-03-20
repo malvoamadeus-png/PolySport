@@ -69,14 +69,16 @@ const pnlColor = (v: number) => (v >= 0 ? "#1f7a1f" : "#b02a2a");
 const shortAddr = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}...${a.slice(-4)}` : a);
 const cellR = { padding: "6px 8px", textAlign: "right" as const, borderBottom: "1px solid #f5f5f5", fontSize: 11 };
 
-function fmtNum(v: number | null | undefined, digits = 2): string {
+function fmtNum(v: number | null | undefined, _digits = 0): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
-  return v.toLocaleString(undefined, { maximumFractionDigits: digits });
+  const rounded = Math.round(v);
+  const safe = Object.is(rounded, -0) ? 0 : rounded;
+  return safe.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
 function fmtPct(v: number | null | undefined): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
-  return `${(v * 100).toFixed(2)}%`;
+  return `${Math.round(v * 100)}%`;
 }
 
 function normalizeAddress(v: string | null | undefined): string | null {
@@ -377,6 +379,7 @@ export function CopytradeLeaderPnlApp() {
   const [addressFilter, setAddressFilter] = useState("");
   const [minTotalPnl, setMinTotalPnl] = useState("");
   const [minWinRate, setMinWinRate] = useState("");
+  const [showAccountDailyDetails, setShowAccountDailyDetails] = useState(false);
 
   const refresh = async () => {
     if (!supabase) return;
@@ -566,6 +569,11 @@ export function CopytradeLeaderPnlApp() {
     return out;
   }, [currentAccountAddress, curveByAddress, acctLeaderCurveRows]);
 
+  const accountDailyRowsVisible = useMemo<DailyPnlDisplayRow[]>(() => {
+    if (showAccountDailyDetails) return accountDailyRows;
+    return accountDailyRows.filter((r) => r.isSelf);
+  }, [accountDailyRows, showAccountDailyDetails]);
+
   const acctSummary = useMemo(() => {
     const keyword = addressFilter.trim().toLowerCase();
     const minPnl = minTotalPnl.trim() ? Number(minTotalPnl) : NaN;
@@ -637,7 +645,15 @@ export function CopytradeLeaderPnlApp() {
             未找到 {currentAccount} 的账户地址映射，当前只展示 Leader 地址曲线。
           </div>
         )}
-        <DailyPnlTable rows={accountDailyRows} leaderRankByAddr={leaderRankByAddr} />
+        <div style={{ marginBottom: 8 }}>
+          <button
+            onClick={() => setShowAccountDailyDetails((v) => !v)}
+            style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}
+          >
+            {showAccountDailyDetails ? "折叠地址明细" : "展开地址明细"}
+          </button>
+        </div>
+        <DailyPnlTable rows={accountDailyRowsVisible} leaderRankByAddr={leaderRankByAddr} />
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12, overflow: "auto" }}>

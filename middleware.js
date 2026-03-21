@@ -12,7 +12,12 @@ function parseCookies(cookieHeader = "") {
     if (idx <= 0) continue;
     const k = part.slice(0, idx).trim();
     const v = part.slice(idx + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
   }
   return out;
 }
@@ -24,6 +29,7 @@ function isStaticAsset(pathname) {
 function shouldSkip(pathname) {
   if (pathname === "/login") return true;
   if (pathname.startsWith("/api/")) return true;
+  if (pathname.startsWith("/_vercel/")) return true;
   if (pathname.startsWith("/assets/")) return true;
   if (pathname.startsWith("/.well-known/")) return true;
   if (pathname === "/favicon.ico" || pathname === "/robots.txt" || pathname === "/sitemap.xml") return true;
@@ -112,21 +118,22 @@ async function verifySessionToken(token, secret) {
   }
 }
 
-function buildLoginUrl(request, requiredRole) {
-  const url = new URL("/login", request.url);
+function buildLoginUrl(currentUrl, requiredRole) {
+  const url = new URL("/login", currentUrl);
   url.searchParams.set("required", requiredRole);
-  url.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
+  url.searchParams.set("next", `${currentUrl.pathname}${currentUrl.search}`);
   return url;
 }
 
 export default async function middleware(request) {
-  const pathname = request.nextUrl.pathname;
+  const currentUrl = new URL(request.url);
+  const pathname = currentUrl.pathname;
   if (shouldSkip(pathname)) return;
 
   const secret = process.env.SESSION_SECRET || "";
   const requiredRole = requiredRoleForPath(pathname);
   if (!secret) {
-    return Response.redirect(buildLoginUrl(request, requiredRole), 307);
+    return Response.redirect(buildLoginUrl(currentUrl, requiredRole), 307);
   }
 
   const cookies = parseCookies(request.headers.get("cookie") || "");
@@ -134,6 +141,6 @@ export default async function middleware(request) {
   const session = await verifySessionToken(token, secret);
 
   if (!session || !hasRequiredRole(session.role, requiredRole)) {
-    return Response.redirect(buildLoginUrl(request, requiredRole), 307);
+    return Response.redirect(buildLoginUrl(currentUrl, requiredRole), 307);
   }
 }

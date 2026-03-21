@@ -1,37 +1,41 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Analytics } from "@vercel/analytics/react";
 import { App } from "./App";
 import { CopytradeLeaderPnlApp } from "./copytradeLeaderPnlApp";
 import { GapAnalysisApp } from "./copytradeGapAnalysis";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { useAuth } from "./useAuth";
-import { Analytics } from "@vercel/analytics/react";
+import { LoginPage } from "./LoginPage";
+import { useAccess, type AccessRole } from "./useAccess";
 
-function AdminOnlyRoute(props: { children: React.ReactNode }) {
-  const { user, isAdmin, loading, signInWithGoogle } = useAuth();
+type RequiredRole = "basic" | "advanced";
 
-  if (loading) {
+function hasRequiredRole(role: AccessRole | null, required: RequiredRole): boolean {
+  if (!role) return false;
+  if (required === "basic") return role === "basic" || role === "advanced";
+  return role === "advanced";
+}
+
+function buildLoginPath(nextPath: string, required: RequiredRole): string {
+  const q = new URLSearchParams();
+  q.set("required", required);
+  q.set("next", nextPath);
+  return `/login?${q.toString()}`;
+}
+
+function RoleRoute(props: { required: RequiredRole; children: React.ReactNode }) {
+  const { role, loadingAccess } = useAccess();
+  const location = useLocation();
+
+  if (loadingAccess) {
     return <div style={{ padding: 16, fontFamily: "system-ui" }}>加载中...</div>;
   }
-  if (!user) {
-    return (
-      <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        <h3 style={{ marginTop: 0 }}>需要登录</h3>
-        <div style={{ marginBottom: 10, color: "#666", fontSize: 14 }}>请先使用 Google 登录后访问该页面。</div>
-        <button onClick={signInWithGoogle} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}>
-          Google 登录
-        </button>
-      </div>
-    );
+
+  if (!hasRequiredRole(role, props.required)) {
+    const nextPath = `${location.pathname}${location.search}${location.hash}`;
+    return <Navigate to={buildLoginPath(nextPath, props.required)} replace />;
   }
-  if (!isAdmin) {
-    return (
-      <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        <h3 style={{ marginTop: 0 }}>无访问权限</h3>
-        <div style={{ color: "#666", fontSize: 14 }}>该页面仅管理员邮箱可访问。</div>
-      </div>
-    );
-  }
+
   return <>{props.children}</>;
 }
 
@@ -39,21 +43,29 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<App />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <RoleRoute required="basic">
+              <App />
+            </RoleRoute>
+          }
+        />
         <Route
           path="/leader-attribution"
           element={
-            <AdminOnlyRoute>
+            <RoleRoute required="advanced">
               <CopytradeLeaderPnlApp />
-            </AdminOnlyRoute>
+            </RoleRoute>
           }
         />
         <Route
           path="/gap-analysis"
           element={
-            <AdminOnlyRoute>
+            <RoleRoute required="advanced">
               <GapAnalysisApp />
-            </AdminOnlyRoute>
+            </RoleRoute>
           }
         />
         <Route path="*" element={<Navigate to="/" replace />} />

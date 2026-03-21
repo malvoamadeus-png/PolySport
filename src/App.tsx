@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseConfig } from "./supabaseClient";
-import { useAuth } from "./useAuth";
+import { useAccess } from "./useAccess";
 import { useTags, type TagValue } from "./useTags";
 import { Link } from "react-router-dom";
 
@@ -388,7 +388,7 @@ function RadarChart(props: { title: string; metrics: MetricDef[]; rows: AddressM
 }
 
 export function App() {
-  const { user, isAdmin, signInWithGoogle, signOut } = useAuth();
+  const { role, isAdvanced, loadingAccess, signOut } = useAccess();
   const { tags, setTag } = useTags();
   const [lastRun, setLastRun] = useState<MasterResult | null>(null);
   const [rows, setRows] = useState<AddressMetric[]>([]);
@@ -603,7 +603,7 @@ export function App() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h2 style={{ margin: 0 }}>PolySport 看板</h2>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {isAdmin ? (
+          {isAdvanced ? (
             <Link
               to="/leader-attribution"
               style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
@@ -618,13 +618,18 @@ export function App() {
           >
             刷新
           </button>
-          {user ? (
+          {role ? (
             <>
               <span style={{ fontSize: 12, color: "#333" }}>
-                {user.email}{isAdmin ? <span style={{ marginLeft: 4, color: "#d4a017", fontWeight: 600 }}>管理员</span> : null}
+                {isAdvanced ? <span style={{ color: "#d4a017", fontWeight: 600 }}>高级权限</span> : "基础权限"}
+                {loadingAccess ? <span style={{ marginLeft: 6, color: "#999" }}>校验中...</span> : null}
               </span>
               <button
-                onClick={signOut}
+                onClick={() => {
+                  void signOut().then(() => {
+                    window.location.assign("/login");
+                  });
+                }}
                 style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
               >
                 登出
@@ -632,10 +637,12 @@ export function App() {
             </>
           ) : (
             <button
-              onClick={signInWithGoogle}
+              onClick={() => {
+                window.location.assign("/login");
+              }}
               style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff" }}
             >
-              Google 登录
+              前往登录
             </button>
           )}
         </div>
@@ -873,12 +880,12 @@ export function App() {
                           {tags[r.address]}
                         </span>
                       ) : null}
-                      {isAdmin ? (
+                      {isAdvanced ? (
                         <select
                           value={tags[r.address] ?? ""}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setTag(r.address, v === "" ? null : v as TagValue, user!.email!);
+                            setTag(r.address, v === "" ? null : v as TagValue, "advanced-password");
                           }}
                           style={{ marginLeft: 6, fontSize: 10, padding: "1px 4px", borderRadius: 4, border: "1px solid #ddd" }}
                         >

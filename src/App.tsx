@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseConfig } from "./supabaseClient";
 import { useAccess } from "./useAccess";
 import { useTags, type TagValue } from "./useTags";
@@ -603,12 +603,24 @@ export function App() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h2 style={{ margin: 0 }}>PolySport 看板</h2>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {isAdvanced ? (
+          <Link
+            to="/leader-attribution"
+            style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
+          >
+            Leader 归因页
+          </Link>
+          <Link
+            to="/gap-analysis"
+            style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
+          >
+            跟单分析
+          </Link>
+          {!isAdvanced ? (
             <Link
-              to="/leader-attribution"
-              style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
+              to="/login?required=advanced&next=%2Fleader-attribution"
+              style={{ fontSize: 12, color: "#b06000", textDecoration: "none" }}
             >
-              打开 Leader 归因页
+              输入密码2解锁高级页
             </Link>
           ) : null}
           <div style={{ fontSize: 12, color: "#666" }}>{loadingRows ? "加载数据…" : `${rows.length} 地址`}</div>

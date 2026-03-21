@@ -19,8 +19,6 @@ type MasterResult = {
 type AddressMetric = {
   address: string;
   total_pnl: number | null;
-  realized_pnl: number | null;
-  unrealized_pnl: number | null;
   roi: number | null;
   profit_factor: number | null;
   max_drawdown: number | null;
@@ -29,6 +27,9 @@ type AddressMetric = {
   total_trades: number | null;
   win_rate: number | null;
   avg_trade_price: number | null;
+  brier_weighted: number | null;
+  skew_unweighted: number | null;
+  skew_weighted: number | null;
   ulcer_index: number | null;
   equity_r2: number | null;
   confidence: string | null;
@@ -39,8 +40,6 @@ type AddressMetric = {
 type NumericKey = keyof Pick<
   AddressMetric,
   | "total_pnl"
-  | "realized_pnl"
-  | "unrealized_pnl"
   | "roi"
   | "profit_factor"
   | "max_drawdown"
@@ -49,6 +48,9 @@ type NumericKey = keyof Pick<
   | "total_trades"
   | "win_rate"
   | "avg_trade_price"
+  | "brier_weighted"
+  | "skew_unweighted"
+  | "skew_weighted"
   | "ulcer_index"
   | "equity_r2"
 >;
@@ -61,12 +63,13 @@ type FilterDef = { key: NumericKey; label: string; format: "num" | "pct"; allowA
 
 const FILTERS: FilterDef[] = [
   { key: "total_pnl", label: "Total PnL", format: "num", allowAbs: true },
-  { key: "realized_pnl", label: "Realized PnL", format: "num", allowAbs: true },
-  { key: "unrealized_pnl", label: "Unrealized PnL", format: "num", allowAbs: true },
   { key: "current_position_value_usd", label: "Current Value", format: "num" },
   { key: "total_trades", label: "Total Trades", format: "num" },
   { key: "win_rate", label: "Win Rate", format: "pct" },
   { key: "avg_trade_price", label: "Avg Trade Price", format: "num" },
+  { key: "brier_weighted", label: "Brier (W)", format: "num" },
+  { key: "skew_unweighted", label: "Skew (U)", format: "num" },
+  { key: "skew_weighted", label: "Skew (W)", format: "num" },
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
   { key: "max_drawdown", label: "Max Drawdown", format: "pct" },
@@ -107,6 +110,7 @@ function parseSourceTags(raw: string | null | undefined): string[] {
   };
   for (const p of raw.split(",")) {
     const s = normalize(p);
+    if (s === "BACKFILL") continue;
     if (s) uniq.add(s);
   }
   return Array.from(uniq);
@@ -476,7 +480,7 @@ export function App() {
       const pageSize = 1000;
       const allRows: AddressMetric[] = [];
       const selectCols =
-        "address,total_pnl,realized_pnl,unrealized_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,ulcer_index,equity_r2";
+        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,brier_weighted,skew_unweighted,skew_weighted,ulcer_index,equity_r2";
 
       // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
       for (let page = 0; page < 50; page += 1) {
@@ -532,8 +536,8 @@ export function App() {
     const base = rows.filter((r) => {
       if (BLACKLISTED_ADDRESSES.has(r.address.toLowerCase())) return false;
       if (r.confidence === "skipped_low_pnl") return false;
-      // 额外保险：只保留 PnL >= 50000（但如果 total_pnl 为 null 则保留）
-      if (typeof r.total_pnl === "number" && Number.isFinite(r.total_pnl) && r.total_pnl < 50000) return false;
+      // 额外保险：只保留 PnL >= 80000（但如果 total_pnl 为 null 则保留）
+      if (typeof r.total_pnl === "number" && Number.isFinite(r.total_pnl) && r.total_pnl < 80000) return false;
       const tag = tags[r.address];
       if (tagFilter === "none") {
         if (tag) return false;
@@ -680,8 +684,6 @@ export function App() {
         <summary style={{ fontWeight: 600, cursor: "pointer", userSelect: "none" }}>参数说明</summary>
         <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.6, color: "#333" }}>
           <div style={{ marginBottom: 8 }}><strong>Total PnL</strong> — 总盈亏：已实现盈亏 + 未实现盈亏</div>
-          <div style={{ marginBottom: 8 }}><strong>Realized PnL</strong> — 已实现盈亏：已平仓交易的盈亏</div>
-          <div style={{ marginBottom: 8 }}><strong>Unrealized PnL</strong> — 未实现盈亏：当前持仓的浮动盈亏</div>
           <div style={{ marginBottom: 8 }}><strong>ROI</strong> — 投资回报率：总盈亏 / 成本基础（所有买入金额之和）</div>
           <div style={{ marginBottom: 8 }}><strong>Profit Factor</strong> — 盈利因子：总盈利 / 总亏损（按市场聚合）</div>
           <div style={{ marginBottom: 8 }}><strong>Max Drawdown</strong> — 最大回撤：权益曲线从峰值到谷底的最大跌幅</div>
@@ -690,6 +692,9 @@ export function App() {
           <div style={{ marginBottom: 8 }}><strong>Total Trades</strong> — 总交易数：买入 + 卖出交易笔数</div>
           <div style={{ marginBottom: 8 }}><strong>Win Rate</strong> — 胜率：盈利交易数 / 总交易数</div>
           <div style={{ marginBottom: 8 }}><strong>Avg Trade Price</strong> — 平均交易价格：所有交易的平均成交价</div>
+          <div style={{ marginBottom: 8 }}><strong>Brier (W)</strong> — 仓位加权 Brier：用 AvgPx 与结算/当前价做误差平方并按仓位加权，越低越好</div>
+          <div style={{ marginBottom: 8 }}><strong>Skew (U)</strong> — 非加权偏度：按每个仓位 ROI 等权，观察交易风格的尾部特征</div>
+          <div style={{ marginBottom: 8 }}><strong>Skew (W)</strong> — 加权偏度：按仓位权重计算 ROI 偏度，更接近真实资金风险暴露</div>
           <div style={{ marginBottom: 8 }}><strong>Ulcer Index (UI)</strong> — 溃疡指数：衡量回撤深度和持续时间的综合惩罚，值越低越好</div>
           <div style={{ marginBottom: 8 }}><strong>R²</strong> — 决定系数：净值曲线与完美直线的拟合度，越接近 1 说明盈利越稳定</div>
         </div>
@@ -848,8 +853,9 @@ export function App() {
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Trades</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Win%</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>AvgPx</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Realized</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Unrealized</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Brier(W)</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Skew(U)</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Skew(W)</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>ROI</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PF</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>MDD</th>
@@ -938,8 +944,9 @@ export function App() {
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_trades, 0)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.avg_trade_price, 4)}</td>
-                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.realized_pnl, 2)}</td>
-                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.unrealized_pnl, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.brier_weighted, 4)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.skew_unweighted, 4)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.skew_weighted, 4)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.roi)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.profit_factor, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.max_drawdown)}</td>
@@ -950,7 +957,7 @@ export function App() {
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={16} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={17} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>

@@ -34,6 +34,9 @@ type AddressMetricLite = {
   sharpe: number | null;
   win_rate: number | null;
   avg_trade_price: number | null;
+  brier_weighted: number | null;
+  skew_unweighted: number | null;
+  skew_weighted: number | null;
   winning_trades: number | null;
   losing_trades: number | null;
   confidence: string | null;
@@ -325,8 +328,6 @@ function LeaderTable(
           <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Leader 地址</th>
           <th style={thStyle}>总盈亏</th>
           <th style={thStyle}>地址总PnL</th>
-          <th style={thStyle}>已实现</th>
-          <th style={thStyle}>未实现</th>
           <th style={thStyle}>胜率</th>
           <th style={thStyle}>题目数</th>
           <th style={thStyle}>ROI</th>
@@ -334,6 +335,9 @@ function LeaderTable(
           <th style={thStyle}>MDD</th>
           <th style={thStyle}>Sharpe</th>
           <th style={thStyle}>AvgPx</th>
+          <th style={thStyle}>Brier(W)</th>
+          <th style={thStyle}>Skew(U)</th>
+          <th style={thStyle}>Skew(W)</th>
         </tr>
       </thead>
       <tbody>
@@ -350,8 +354,6 @@ function LeaderTable(
               </td>
               <td style={{ padding: 10, textAlign: "right", color: pnlColor(r.total_pnl ?? 0) }}>{fmtNum(r.total_pnl, 2)}</td>
               <td style={{ padding: 10, textAlign: "right", color: pnlColor(m?.total_pnl ?? 0) }}>{fmtNum(m?.total_pnl, 2)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_realized_pnl, 2)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_unrealized_pnl, 2)}</td>
               <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
               <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_markets, 0)}</td>
               <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(m?.roi)}</td>
@@ -359,6 +361,9 @@ function LeaderTable(
               <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(m?.max_drawdown)}</td>
               <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.sharpe, 2)}</td>
               <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.avg_trade_price, 4)}</td>
+              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.brier_weighted, 4)}</td>
+              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.skew_unweighted, 4)}</td>
+              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.skew_weighted, 4)}</td>
             </tr>
           );
         })}
@@ -439,7 +444,7 @@ export function CopytradeLeaderPnlApp() {
       if (leaderAddrs.length > 0) {
         const mres = await supabase
           .from("address_metrics")
-          .select("address,total_pnl,roi,profit_factor,max_drawdown,sharpe,win_rate,avg_trade_price,winning_trades,losing_trades,confidence,source_tags,updated_at")
+          .select("address,total_pnl,roi,profit_factor,max_drawdown,sharpe,win_rate,avg_trade_price,brier_weighted,skew_unweighted,skew_weighted,winning_trades,losing_trades,confidence,source_tags,updated_at")
           .in("address", leaderAddrs);
         if (mres.error) throw new Error(mres.error.message);
         const mm: Record<string, AddressMetricLite> = {};

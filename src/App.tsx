@@ -30,6 +30,7 @@ type AddressMetric = {
   brier_weighted: number | null;
   skew_unweighted: number | null;
   skew_weighted: number | null;
+  ct_score_total_100: number | null;
   ulcer_index: number | null;
   equity_r2: number | null;
   confidence: string | null;
@@ -51,6 +52,7 @@ type NumericKey = keyof Pick<
   | "brier_weighted"
   | "skew_unweighted"
   | "skew_weighted"
+  | "ct_score_total_100"
   | "ulcer_index"
   | "equity_r2"
 >;
@@ -70,6 +72,7 @@ const FILTERS: FilterDef[] = [
   { key: "brier_weighted", label: "Brier (W)", format: "num" },
   { key: "skew_unweighted", label: "Skew (U)", format: "num" },
   { key: "skew_weighted", label: "Skew (W)", format: "num" },
+  { key: "ct_score_total_100", label: "CT Score", format: "num" },
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
   { key: "max_drawdown", label: "Max Drawdown", format: "pct" },
@@ -480,7 +483,7 @@ export function App() {
       const pageSize = 1000;
       const allRows: AddressMetric[] = [];
       const selectCols =
-        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,brier_weighted,skew_unweighted,skew_weighted,ulcer_index,equity_r2";
+        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,brier_weighted,skew_unweighted,skew_weighted,ct_score_total_100,ulcer_index,equity_r2";
 
       // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
       for (let page = 0; page < 50; page += 1) {
@@ -849,6 +852,7 @@ export function App() {
                   <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>地址</th>
                   <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>市场来源</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PnL</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>CT Score</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Value</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Trades</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Win%</th>
@@ -940,6 +944,7 @@ export function App() {
                       )}
                     </td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_pnl, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.ct_score_total_100, 1)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.current_position_value_usd, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_trades, 0)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
@@ -957,7 +962,7 @@ export function App() {
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={17} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={18} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>

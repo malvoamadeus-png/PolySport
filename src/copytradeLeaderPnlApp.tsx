@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase, supabaseConfig } from "./supabaseClient";
 
 type LeaderSummary = {
@@ -88,6 +89,38 @@ function normalizeAddress(v: string | null | undefined): string | null {
   if (!v) return null;
   const s = String(v).trim().toLowerCase();
   return /^0x[0-9a-f]{40}$/.test(s) ? s : null;
+}
+
+function parseDateKeyUTC(key: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  const d = new Date(`${key}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function fmtDateKeyUTC(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function buildRecentDateWindow(data: DailyLeaderPnl[], days = 14): string[] {
+  const keys = Array.from(
+    new Set(
+      data
+        .map((r) => String(r.date_key || "").trim())
+        .filter((k) => /^\d{4}-\d{2}-\d{2}$/.test(k))
+    )
+  ).sort();
+  if (!keys.length) return [];
+  const endKey = keys[keys.length - 1];
+  const end = parseDateKeyUTC(endKey);
+  if (!end) return [];
+  const out: string[] = [];
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const d = new Date(end.getTime());
+    d.setUTCDate(d.getUTCDate() - i);
+    out.push(fmtDateKeyUTC(d));
+  }
+  return out;
 }
 
 function resolveAccountAddress(accountName: string): string | null {
@@ -216,18 +249,23 @@ function DailyPnlTable(
 function DailyLeaderPnlTable(
   {
     data,
+    dates,
     totalByLeader,
     leaderOrder,
     leaderRankByAddr,
+    selectedLeaderAddress,
+    onSelectLeader,
   }: {
     data: DailyLeaderPnl[];
+    dates: string[];
     totalByLeader: Record<string, number>;
     leaderOrder: string[];
     leaderRankByAddr: Record<string, number>;
+    selectedLeaderAddress: string | null;
+    onSelectLeader: (addr: string) => void;
   }
 ) {
   if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无 Leader 每日盈亏数据</div>;
-  const dates = Array.from(new Set(data.map((r) => r.date_key))).sort().slice(-14);
   if (!dates.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无 Leader 每日盈亏数据</div>;
 
   const dateSet = new Set(dates);
@@ -252,6 +290,7 @@ function DailyLeaderPnlTable(
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr style={{ background: "#fafafa" }}>
+          <th style={{ textAlign: "center", padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>选择</th>
           <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>序号</th>
           <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #eee", position: "sticky", left: 0, background: "#fafafa", zIndex: 1 }}>Leader</th>
           {dates.map((d) => (
@@ -265,8 +304,17 @@ function DailyLeaderPnlTable(
           const row = dailyMap.get(addr) ?? new Map<string, number>();
           const rangeTotal = dates.reduce((s, d) => s + (row.get(d) ?? 0), 0);
           const total = totalByLeader[addr] ?? rangeTotal;
+          const selected = selectedLeaderAddress === addr;
           return (
-            <tr key={addr}>
+            <tr key={addr} style={selected ? { background: "#f5f8ff" } : undefined}>
+              <td style={{ ...cellR, textAlign: "center" }}>
+                <input
+                  type="radio"
+                  name="leader-daily-select"
+                  checked={selected}
+                  onChange={() => onSelectLeader(addr)}
+                />
+              </td>
               <td style={cellR}>{leaderRankByAddr[addr] ?? "-"}</td>
               <td style={{ padding: "6px 8px", borderBottom: "1px solid #f5f5f5", position: "sticky", left: 0, background: "#fff", zIndex: 1 }} title={addr}>
                 <a href={`https://polymarket.com/profile/${addr}`} target="_blank" rel="noreferrer" style={{ color: "#1a4fff", textDecoration: "none", fontSize: 11 }}>{shortAddr(addr)}</a>
@@ -280,6 +328,7 @@ function DailyLeaderPnlTable(
           );
         })}
         <tr style={{ background: "#fafafa" }}>
+          <td style={{ ...cellR, borderTop: "1px solid #eee", fontWeight: 700, textAlign: "center" }}>-</td>
           <td style={{ ...cellR, borderTop: "1px solid #eee", fontWeight: 700 }}>-</td>
           <td style={{ padding: "6px 8px", borderTop: "1px solid #eee", fontWeight: 700, position: "sticky", left: 0, zIndex: 1 }}>区间合计</td>
           {columnTotals.map((v, idx) => (
@@ -289,6 +338,53 @@ function DailyLeaderPnlTable(
         </tr>
       </tbody>
     </table>
+  );
+}
+
+function LeaderDailyBarSection({
+  leaderAddress,
+  dates,
+  valuesByDate,
+}: {
+  leaderAddress: string | null;
+  dates: string[];
+  valuesByDate: Map<string, number>;
+}) {
+  if (!leaderAddress) {
+    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>请先在上方表格选择一个 Leader</div>;
+  }
+  if (!dates.length) {
+    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无可展示的近14天数据</div>;
+  }
+  const chartData = dates.map((d) => ({ date: d.slice(5), pnl: valuesByDate.get(d) ?? 0 }));
+  const total = chartData.reduce((s, r) => s + r.pnl, 0);
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "#555", marginBottom: 8 }}>
+        选中 Leader: <a href={`https://polymarket.com/profile/${leaderAddress}`} target="_blank" rel="noreferrer" style={{ color: "#1a4fff", textDecoration: "none" }}>{shortAddr(leaderAddress)}</a>
+        <span style={{ marginLeft: 12, fontWeight: 700, color: pnlColor(total) }}>14天合计: {fmtNum(total, 2)}</span>
+      </div>
+      <div style={{ width: "100%", height: 280 }}>
+        <ResponsiveContainer>
+          <BarChart data={chartData} margin={{ top: 8, right: 16, left: 6, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip
+              formatter={(value: any) => fmtNum(typeof value === "number" ? value : Number(value ?? 0), 2)}
+              labelFormatter={(label: any) => `日期: ${String(label ?? "")}`}
+            />
+            <ReferenceLine y={0} stroke="#999" />
+            <Bar dataKey="pnl">
+              {chartData.map((entry, idx) => (
+                <Cell key={`${entry.date}-${idx}`} fill={entry.pnl >= 0 ? "#1f7a1f" : "#b02a2a"} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 
@@ -385,6 +481,9 @@ export function CopytradeLeaderPnlApp() {
   const [minTotalPnl, setMinTotalPnl] = useState("");
   const [minWinRate, setMinWinRate] = useState("");
   const [showAccountDailyDetails, setShowAccountDailyDetails] = useState(false);
+  const [selectedLeaderAddress, setSelectedLeaderAddress] = useState<string | null>(null);
+  const [showLeaderDailyTable, setShowLeaderDailyTable] = useState(true);
+  const [showLeaderDailyChart, setShowLeaderDailyChart] = useState(false);
 
   const refresh = async () => {
     if (!supabase) return;
@@ -490,6 +589,10 @@ export function CopytradeLeaderPnlApp() {
     () => dailyLeaderPnl.filter((r) => (r.account_name || "default") === currentAccount),
     [dailyLeaderPnl, currentAccount]
   );
+  const leaderDailyWindowDates = useMemo(
+    () => buildRecentDateWindow(acctDailyLeader, 14),
+    [acctDailyLeader]
+  );
 
   const acctLeaderAddresses = useMemo(() => {
     const addrs = new Set<string>();
@@ -579,6 +682,32 @@ export function CopytradeLeaderPnlApp() {
     return accountDailyRows.filter((r) => r.isSelf);
   }, [accountDailyRows, showAccountDailyDetails]);
 
+  const selectedLeaderValuesByDate = useMemo(() => {
+    const out = new Map<string, number>();
+    if (!selectedLeaderAddress) return out;
+    for (const r of acctDailyLeader) {
+      const addr = (r.leader_address || "").toLowerCase().trim();
+      if (addr !== selectedLeaderAddress) continue;
+      const dateKey = String(r.date_key || "").trim();
+      const prev = out.get(dateKey) ?? 0;
+      out.set(dateKey, prev + (r.total_pnl ?? 0));
+    }
+    return out;
+  }, [acctDailyLeader, selectedLeaderAddress]);
+
+  useEffect(() => {
+    setSelectedLeaderAddress(null);
+    setShowLeaderDailyTable(true);
+    setShowLeaderDailyChart(false);
+  }, [currentAccount]);
+
+  useEffect(() => {
+    if (!selectedLeaderAddress) return;
+    if (!leaderOrder.includes(selectedLeaderAddress)) {
+      setSelectedLeaderAddress(null);
+    }
+  }, [leaderOrder, selectedLeaderAddress]);
+
   const acctSummary = useMemo(() => {
     const keyword = addressFilter.trim().toLowerCase();
     const minPnl = minTotalPnl.trim() ? Number(minTotalPnl) : NaN;
@@ -662,13 +791,45 @@ export function CopytradeLeaderPnlApp() {
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12, overflow: "auto" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Leader 每日盈亏（近 14 天）— {currentAccount}</div>
-        <DailyLeaderPnlTable
-          data={acctDailyLeader}
-          totalByLeader={leaderTotalByAddr}
-          leaderOrder={leaderOrder}
-          leaderRankByAddr={leaderRankByAddr}
-        />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Leader 每日盈亏（近 14 天）— {currentAccount}</div>
+          <button
+            onClick={() => setShowLeaderDailyTable((v) => !v)}
+            style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}
+          >
+            {showLeaderDailyTable ? "折叠表格" : "展开表格"}
+          </button>
+        </div>
+        {showLeaderDailyTable ? (
+          <DailyLeaderPnlTable
+            data={acctDailyLeader}
+            dates={leaderDailyWindowDates}
+            totalByLeader={leaderTotalByAddr}
+            leaderOrder={leaderOrder}
+            leaderRankByAddr={leaderRankByAddr}
+            selectedLeaderAddress={selectedLeaderAddress}
+            onSelectLeader={(addr) => setSelectedLeaderAddress(addr)}
+          />
+        ) : null}
+      </div>
+
+      <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>所选 Leader 每日盈亏柱状图（近 14 天）</div>
+          <button
+            onClick={() => setShowLeaderDailyChart((v) => !v)}
+            style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}
+          >
+            {showLeaderDailyChart ? "折叠图表" : "展开图表"}
+          </button>
+        </div>
+        {showLeaderDailyChart ? (
+          <LeaderDailyBarSection
+            leaderAddress={selectedLeaderAddress}
+            dates={leaderDailyWindowDates}
+            valuesByDate={selectedLeaderValuesByDate}
+          />
+        ) : null}
       </div>
 
       <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>

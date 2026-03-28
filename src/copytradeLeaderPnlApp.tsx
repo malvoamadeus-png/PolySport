@@ -67,6 +67,7 @@ const PNL_CURVE_URL = "https://user-pnl-api.polymarket.com/user-pnl";
 const ACCOUNT_PNL_ADDRESS_FALLBACK: Record<string, string> = {
   main: "0x5f39d698c8b1f2efadb1042a3c6085e82ae3d603",
   "pm-1": "0x17360267181cbc47300119871bbf04bef33374dd",
+  "pm-2": "0x98cf229448e993e9a9c3b8ed34a5d5b221f6a088",
 };
 
 const pnlColor = (v: number) => (v >= 0 ? "#1f7a1f" : "#b02a2a");
@@ -83,6 +84,25 @@ function fmtNum(v: number | null | undefined, _digits = 0): string {
 function fmtPct(v: number | null | undefined): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
   return `${Math.round(v * 100)}%`;
+}
+
+function buildAccountEnvSuffixes(accountName: string): string[] {
+  const base = accountName.trim().toUpperCase();
+  if (!base) return [];
+  return Array.from(
+    new Set(
+      [
+        base,
+        base.replace(/[^A-Z0-9]/g, "_"),
+        base.replace(/[^A-Z0-9]/g, "-"),
+        base.replace(/-/g, "_"),
+        base.replace(/_/g, "-"),
+        base.replace(/[^A-Z0-9]/g, ""),
+      ]
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function normalizeAddress(v: string | null | undefined): string | null {
@@ -125,21 +145,37 @@ function buildRecentDateWindow(data: DailyLeaderPnl[], days = 14): string[] {
 
 function resolveAccountAddress(accountName: string): string | null {
   const env = import.meta.env as Record<string, string | undefined>;
-  const keySuffix = accountName.trim().toUpperCase().replace(/[^A-Z0-9]/g, "_");
-  const fromDedicatedVar = normalizeAddress(env[`VITE_COPYTRADE_ACCOUNT_ADDRESS_${keySuffix}`]);
-  if (fromDedicatedVar) return fromDedicatedVar;
+  const normalizedName = accountName.trim();
+  if (!normalizedName) return null;
+
+  const suffixes = buildAccountEnvSuffixes(normalizedName);
+  for (const suffix of suffixes) {
+    const fromDedicatedVar = normalizeAddress(env[`VITE_COPYTRADE_ACCOUNT_ADDRESS_${suffix}`]);
+    if (fromDedicatedVar) return fromDedicatedVar;
+  }
+  for (const suffix of suffixes) {
+    const fromFunderVar = normalizeAddress(env[`VITE_FUNDER_ADDRESS_${suffix}`]);
+    if (fromFunderVar) return fromFunderVar;
+  }
 
   const jsonMapRaw = env.VITE_COPYTRADE_ACCOUNT_ADDRESS_MAP;
   if (jsonMapRaw) {
     try {
       const m = JSON.parse(jsonMapRaw) as Record<string, unknown>;
-      const fromMap = normalizeAddress(String(m[accountName] ?? m[accountName.toLowerCase()] ?? ""));
+      const fromMap = normalizeAddress(
+        String(
+          m[normalizedName] ??
+          m[normalizedName.toLowerCase()] ??
+          m[normalizedName.toUpperCase()] ??
+          ""
+        )
+      );
       if (fromMap) return fromMap;
     } catch {
       // ignore malformed json
     }
   }
-  return normalizeAddress(ACCOUNT_PNL_ADDRESS_FALLBACK[accountName.toLowerCase()]);
+  return normalizeAddress(ACCOUNT_PNL_ADDRESS_FALLBACK[normalizedName.toLowerCase()]);
 }
 
 async function fetchAllRows<T>(table: string, selectCols: string, orderBy: string, ascending = false): Promise<T[]> {

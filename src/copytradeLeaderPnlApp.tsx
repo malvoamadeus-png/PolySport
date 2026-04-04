@@ -26,25 +26,6 @@ type DailyLeaderPnl = {
   market_count: number | null;
 };
 
-type AddressMetricLite = {
-  address: string;
-  total_pnl: number | null;
-  roi: number | null;
-  profit_factor: number | null;
-  max_drawdown: number | null;
-  sharpe: number | null;
-  win_rate: number | null;
-  avg_trade_price: number | null;
-  brier_weighted: number | null;
-  skew_unweighted: number | null;
-  skew_weighted: number | null;
-  winning_trades: number | null;
-  losing_trades: number | null;
-  confidence: string | null;
-  source_tags: string | null;
-  updated_at: string | null;
-};
-
 type PnlCurvePoint = { t: number; p: number };
 
 type AddressCurveRow = {
@@ -79,11 +60,6 @@ function fmtNum(v: number | null | undefined, _digits = 0): string {
   const rounded = Math.round(v);
   const safe = Object.is(rounded, -0) ? 0 : rounded;
   return safe.toLocaleString(undefined, { maximumFractionDigits: 0 });
-}
-
-function fmtPct(v: number | null | undefined): string {
-  if (typeof v !== "number" || Number.isNaN(v)) return "-";
-  return `${Math.round(v * 100)}%`;
 }
 
 function buildAccountEnvSuffixes(accountName: string): string[] {
@@ -320,7 +296,15 @@ function DailyLeaderPnlTable(
   if (!leaders.length) leaders = Array.from(dailyMap.keys());
 
   const columnTotals = dates.map((d) => leaders.reduce((s, addr) => s + (dailyMap.get(addr)?.get(d) ?? 0), 0));
-  const summaryTotal = leaders.reduce((s, addr) => s + (totalByLeader[addr] ?? 0), 0);
+  const summary14DayTotal = columnTotals.reduce((s, v) => s + v, 0);
+  const summaryTotal = leaders.reduce((s, addr) => {
+    const row = dailyMap.get(addr) ?? new Map<string, number>();
+    const rangeTotal = dates.reduce((acc, d) => acc + (row.get(d) ?? 0), 0);
+    const hasTotal = Object.prototype.hasOwnProperty.call(totalByLeader, addr);
+    const total = hasTotal ? totalByLeader[addr] : rangeTotal;
+    return s + total;
+  }, 0);
+  const summaryPreviousTotal = summaryTotal - summary14DayTotal;
 
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -332,14 +316,18 @@ function DailyLeaderPnlTable(
           {dates.map((d) => (
             <th key={d} style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>{d.slice(5)}</th>
           ))}
-          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>累计总盈亏</th>
+          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>14天盈亏</th>
+          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>此前盈亏</th>
+          <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid #eee", fontWeight: 700 }}>总盈亏</th>
         </tr>
       </thead>
       <tbody>
         {leaders.map((addr) => {
           const row = dailyMap.get(addr) ?? new Map<string, number>();
           const rangeTotal = dates.reduce((s, d) => s + (row.get(d) ?? 0), 0);
-          const total = totalByLeader[addr] ?? rangeTotal;
+          const hasTotal = Object.prototype.hasOwnProperty.call(totalByLeader, addr);
+          const total = hasTotal ? totalByLeader[addr] : rangeTotal;
+          const previousTotal = total - rangeTotal;
           const selected = selectedLeaderAddress === addr;
           return (
             <tr key={addr} style={selected ? { background: "#f5f8ff" } : undefined}>
@@ -359,6 +347,8 @@ function DailyLeaderPnlTable(
                 const v = row.get(d) ?? 0;
                 return <td key={d} style={{ ...cellR, color: pnlColor(v) }}>{v === 0 ? "-" : fmtNum(v, 2)}</td>;
               })}
+              <td style={{ ...cellR, fontWeight: 700, color: pnlColor(rangeTotal) }}>{fmtNum(rangeTotal, 2)}</td>
+              <td style={{ ...cellR, fontWeight: 700, color: pnlColor(previousTotal) }}>{fmtNum(previousTotal, 2)}</td>
               <td style={{ ...cellR, fontWeight: 700, color: pnlColor(total) }}>{fmtNum(total, 2)}</td>
             </tr>
           );
@@ -370,6 +360,8 @@ function DailyLeaderPnlTable(
           {columnTotals.map((v, idx) => (
             <td key={idx} style={{ ...cellR, borderTop: "1px solid #eee", fontWeight: 700, color: pnlColor(v) }}>{v === 0 ? "-" : fmtNum(v, 2)}</td>
           ))}
+          <td style={{ ...cellR, borderTop: "1px solid #eee", fontWeight: 700, color: pnlColor(summary14DayTotal) }}>{fmtNum(summary14DayTotal, 2)}</td>
+          <td style={{ ...cellR, borderTop: "1px solid #eee", fontWeight: 700, color: pnlColor(summaryPreviousTotal) }}>{fmtNum(summaryPreviousTotal, 2)}</td>
           <td style={{ ...cellR, borderTop: "1px solid #eee", fontWeight: 700, color: pnlColor(summaryTotal) }}>{fmtNum(summaryTotal, 2)}</td>
         </tr>
       </tbody>
@@ -424,98 +416,14 @@ function LeaderDailyBarSection({
   );
 }
 
-function LeaderTable(
-  {
-    rows,
-    metrics,
-    leaderOrder,
-    leaderRankByAddr,
-  }: {
-    rows: LeaderSummary[];
-    metrics: Record<string, AddressMetricLite>;
-    leaderOrder: string[];
-    leaderRankByAddr: Record<string, number>;
-  }
-) {
-  if (!rows.length) return <div style={{ padding: 12, color: "#666", fontSize: 12 }}>暂无数据</div>;
-  const thStyle = { textAlign: "right" as const, padding: 10, borderBottom: "1px solid #eee" };
-
-  const rowByAddr = new Map<string, LeaderSummary>();
-  for (const r of rows) rowByAddr.set((r.leader_address || "").toLowerCase(), r);
-  const orderedRows: LeaderSummary[] = [];
-  for (const addr of leaderOrder) {
-    const hit = rowByAddr.get(addr);
-    if (hit) orderedRows.push(hit);
-  }
-  for (const r of rows) {
-    const addr = (r.leader_address || "").toLowerCase();
-    if (!leaderRankByAddr[addr]) orderedRows.push(r);
-  }
-
-  return (
-    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-      <thead>
-        <tr style={{ background: "#fafafa" }}>
-          <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>序号</th>
-          <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>Leader 地址</th>
-          <th style={thStyle}>总盈亏</th>
-          <th style={thStyle}>地址总PnL</th>
-          <th style={thStyle}>胜率</th>
-          <th style={thStyle}>题目数</th>
-          <th style={thStyle}>ROI</th>
-          <th style={thStyle}>PF</th>
-          <th style={thStyle}>MDD</th>
-          <th style={thStyle}>Sharpe</th>
-          <th style={thStyle}>AvgPx</th>
-          <th style={thStyle}>Brier(W)</th>
-          <th style={thStyle}>Skew(U)</th>
-          <th style={thStyle}>Skew(W)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {orderedRows.map((r) => {
-          const k = (r.leader_address || "").toLowerCase();
-          const m = metrics[k];
-          return (
-            <tr key={k} style={{ borderBottom: "1px solid #f3f3f3" }}>
-              <td style={{ padding: 10, textAlign: "right" }}>{leaderRankByAddr[k] ?? "-"}</td>
-              <td style={{ padding: 10 }}>
-                <a href={`https://polymarket.com/profile/${r.leader_address}`} target="_blank" rel="noreferrer" style={{ color: "#1a4fff", textDecoration: "none" }}>
-                  {r.leader_address}
-                </a>
-              </td>
-              <td style={{ padding: 10, textAlign: "right", color: pnlColor(r.total_pnl ?? 0) }}>{fmtNum(r.total_pnl, 2)}</td>
-              <td style={{ padding: 10, textAlign: "right", color: pnlColor(m?.total_pnl ?? 0) }}>{fmtNum(m?.total_pnl, 2)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_markets, 0)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(m?.roi)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.profit_factor, 2)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(m?.max_drawdown)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.sharpe, 2)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.avg_trade_price, 4)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.brier_weighted, 4)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.skew_unweighted, 4)}</td>
-              <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(m?.skew_weighted, 4)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
 export function CopytradeLeaderPnlApp() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summaryRows, setSummaryRows] = useState<LeaderSummary[]>([]);
-  const [metricsByAddress, setMetricsByAddress] = useState<Record<string, AddressMetricLite>>({});
   const [dailyLeaderPnl, setDailyLeaderPnl] = useState<DailyLeaderPnl[]>([]);
   const [curveByAddress, setCurveByAddress] = useState<Record<string, PnlCurvePoint[]>>({});
   const [accountAddressByName, setAccountAddressByName] = useState<Record<string, string>>({});
   const [activeAccount, setActiveAccount] = useState<string>("");
-  const [addressFilter, setAddressFilter] = useState("");
-  const [minTotalPnl, setMinTotalPnl] = useState("");
-  const [minWinRate, setMinWinRate] = useState("");
   const [showAccountDailyDetails, setShowAccountDailyDetails] = useState(false);
   const [selectedLeaderAddress, setSelectedLeaderAddress] = useState<string | null>(null);
   const [showLeaderDailyTable, setShowLeaderDailyTable] = useState(true);
@@ -575,26 +483,9 @@ export function CopytradeLeaderPnlApp() {
       const curves: Record<string, PnlCurvePoint[]> = {};
       for (const [addr, points] of curveEntries) curves[addr] = points;
       setCurveByAddress(curves);
-
-      if (leaderAddrs.length > 0) {
-        const mres = await supabase
-          .from("address_metrics")
-          .select("address,total_pnl,roi,profit_factor,max_drawdown,sharpe,win_rate,avg_trade_price,brier_weighted,skew_unweighted,skew_weighted,winning_trades,losing_trades,confidence,source_tags,updated_at")
-          .in("address", leaderAddrs);
-        if (mres.error) throw new Error(mres.error.message);
-        const mm: Record<string, AddressMetricLite> = {};
-        for (const row of (mres.data ?? []) as AddressMetricLite[]) {
-          const k = (row.address || "").toLowerCase().trim();
-          if (k) mm[k] = row;
-        }
-        setMetricsByAddress(mm);
-      } else {
-        setMetricsByAddress({});
-      }
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setSummaryRows([]);
-      setMetricsByAddress({});
       setCurveByAddress({});
       setDailyLeaderPnl([]);
       setAccountAddressByName({});
@@ -648,7 +539,8 @@ export function CopytradeLeaderPnlApp() {
     for (const r of acctSummaryAll) {
       const a = (r.leader_address || "").toLowerCase();
       if (!a) continue;
-      m[a] = r.total_pnl ?? 0;
+      if (typeof r.total_pnl !== "number" || Number.isNaN(r.total_pnl)) continue;
+      m[a] = r.total_pnl;
     }
     return m;
   }, [acctSummaryAll]);
@@ -743,18 +635,6 @@ export function CopytradeLeaderPnlApp() {
       setSelectedLeaderAddress(null);
     }
   }, [leaderOrder, selectedLeaderAddress]);
-
-  const acctSummary = useMemo(() => {
-    const keyword = addressFilter.trim().toLowerCase();
-    const minPnl = minTotalPnl.trim() ? Number(minTotalPnl) : NaN;
-    const minWr = minWinRate.trim() ? Number(minWinRate) : NaN;
-    return acctSummaryAll.filter((r) => {
-      if (keyword && !(r.leader_address || "").toLowerCase().includes(keyword)) return false;
-      if (Number.isFinite(minPnl) && (typeof r.total_pnl !== "number" || r.total_pnl < minPnl)) return false;
-      if (Number.isFinite(minWr) && (typeof r.win_rate !== "number" || r.win_rate * 100 < minWr)) return false;
-      return true;
-    });
-  }, [acctSummaryAll, addressFilter, minTotalPnl, minWinRate]);
 
   const acctTotalPnl = useMemo(
     () => acctSummaryAll.reduce((s, r) => s + (r.total_pnl ?? 0), 0),
@@ -868,22 +748,6 @@ export function CopytradeLeaderPnlApp() {
         ) : null}
       </div>
 
-      <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>Leader 归因 — {currentAccount}</div>
-          <input value={addressFilter} onChange={(e) => setAddressFilter(e.target.value)} placeholder="筛选地址" style={{ width: 240, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", fontSize: 12 }} />
-          <input value={minTotalPnl} onChange={(e) => setMinTotalPnl(e.target.value)} placeholder="最小总盈亏" style={{ width: 120, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", fontSize: 12 }} />
-          <input value={minWinRate} onChange={(e) => setMinWinRate(e.target.value)} placeholder="最小胜率(%)" style={{ width: 120, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", fontSize: 12 }} />
-        </div>
-        <div style={{ overflow: "auto" }}>
-          <LeaderTable
-            rows={acctSummary}
-            metrics={metricsByAddress}
-            leaderOrder={leaderOrder}
-            leaderRankByAddr={leaderRankByAddr}
-          />
-        </div>
-      </div>
     </div>
   );
 }

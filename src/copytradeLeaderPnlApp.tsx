@@ -660,6 +660,7 @@ export function CopytradeLeaderPnlApp() {
   const [drilldownRows, setDrilldownRows] = useState<DailyLeaderMarketLegPnl[]>([]);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
   const [drilldownError, setDrilldownError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const drilldownPanelRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = async () => {
@@ -716,6 +717,7 @@ export function CopytradeLeaderPnlApp() {
       const curves: Record<string, PnlCurvePoint[]> = {};
       for (const [addr, points] of curveEntries) curves[addr] = points;
       setCurveByAddress(curves);
+      setRefreshVersion((v) => v + 1);
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setSummaryRows([]);
@@ -946,7 +948,7 @@ export function CopytradeLeaderPnlApp() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDrilldown]);
+  }, [selectedDrilldown, refreshVersion]);
 
   useEffect(() => {
     if (!selectedDrilldown || drilldownLoading) return;

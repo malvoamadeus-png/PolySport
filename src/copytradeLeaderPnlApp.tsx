@@ -61,6 +61,19 @@ type LegCumulativeStats = {
   settledSize: number;
 };
 
+type LegCumulativeSourceRow = Pick<
+  DailyLeaderMarketLegPnl,
+  | "condition_id"
+  | "token_id"
+  | "buy_fill_count"
+  | "buy_size"
+  | "buy_cost_usd"
+  | "sell_fill_count"
+  | "sell_size"
+  | "sell_proceeds_usd"
+  | "settled_size"
+>;
+
 type DrilldownSelection = {
   accountName: string;
   leaderAddress: string;
@@ -91,6 +104,7 @@ const ACCOUNT_PNL_ADDRESS_FALLBACK: Record<string, string> = {
   "pm-1": "0x17360267181cbc47300119871bbf04bef33374dd",
   "pm-2": "0x98cf229448e993e9a9c3b8ed34a5d5b221f6a088",
 };
+const DRILLDOWN_MARKET_MIN_ABS_PNL = 5;
 
 const pnlColor = (v: number) => (v >= 0 ? "#1f7a1f" : "#b02a2a");
 const shortAddr = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}...${a.slice(-4)}` : a);
@@ -117,9 +131,11 @@ function isNonZero(v: number | null | undefined): boolean {
 }
 
 function closeStateLabel(v: string | null | undefined): string {
+  if (v === "redeemable") return "待赎回";
   if (v === "settled") return "到期/赎回（含 merge 无法区分）";
   if (v === "sold") return "卖出";
   if (v === "mixed") return "部分卖出 / 部分到期或持有";
+  if (v === "flat") return "已平/无当日动作";
   return "持有中";
 }
 
@@ -142,7 +158,7 @@ function n(v: number | null | undefined): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-function buildLegCumulativeStats(rows: DailyLeaderMarketLegPnl[]): Record<string, LegCumulativeStats> {
+function buildLegCumulativeStats(rows: LegCumulativeSourceRow[]): Record<string, LegCumulativeStats> {
   const out: Record<string, LegCumulativeStats> = {};
   for (const row of rows) {
     const key = legKey(row.condition_id, row.token_id);
@@ -166,6 +182,23 @@ function buildLegCumulativeStats(rows: DailyLeaderMarketLegPnl[]): Record<string
     out[key].settledSize += n(row.settled_size);
   }
   return out;
+}
+
+async function fetchPagedRows<T>(
+  buildPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>
+): Promise<T[]> {
+  const rows: T[] = [];
+  const pageSize = 1000;
+  for (let page = 0; page < 500; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const res = await buildPage(from, to);
+    if (res.error) throw new Error(res.error.message || "Failed to fetch paged rows");
+    const chunk = res.data ?? [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return rows;
 }
 
 function buildAccountEnvSuffixes(accountName: string): string[] {
@@ -574,14 +607,12 @@ function DailyLeaderDrilldownPanel({
   cumulativeByLeg,
   loading,
   error,
-  expectedTotal,
 }: {
   selection: DrilldownSelection | null;
   rows: DailyLeaderMarketLegPnl[];
   cumulativeByLeg: Record<string, LegCumulativeStats>;
   loading: boolean;
   error: string | null;
-  expectedTotal: number;
 }) {
   if (!selection) {
     return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>点击上方某个 Leader 的单日利润后，这里会展示市场级归因明细。</div>;
@@ -596,7 +627,7 @@ function DailyLeaderDrilldownPanel({
     return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>该日无市场级归因明细</div>;
   }
 
-  const marketGroups = Array.from(
+  const visibleMarketGroups = Array.from(
     rows.reduce((map, row) => {
       const key = `${row.condition_id}::${row.market_slug || row.condition_id}`;
       const existing = map.get(key) || {
@@ -618,13 +649,14 @@ function DailyLeaderDrilldownPanel({
       hasSignal: group.rows.some((row) => hasDailySignal(row)),
     }))
     .filter((group) => group.hasSignal)
+    .filter((group) => Math.abs(group.marketTotal) >= DRILLDOWN_MARKET_MIN_ABS_PNL)
     .sort((a, b) => Math.abs(b.marketTotal) - Math.abs(a.marketTotal));
 
-  if (!marketGroups.length) {
-    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>该日无市场级归因明细</div>;
+  if (!visibleMarketGroups.length) {
+    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>该日无可见市场级归因明细（已隐藏 |市场当日合计| &lt; 5 USD 的市场）</div>;
   }
 
-  const panelTotal = marketGroups.reduce((sum, group) => sum + group.marketTotal, 0);
+  const visibleTotal = visibleMarketGroups.reduce((sum, group) => sum + group.marketTotal, 0);
 
   return (
     <div>
@@ -636,8 +668,8 @@ function DailyLeaderDrilldownPanel({
           </a>{" "}
           / 日期 <b>{selection.dateKey}</b>
         </div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: pnlColor(panelTotal) }}>
-          当日合计 {panelTotal >= 0 ? "+" : ""}{fmtDec(panelTotal, 2)}
+        <div style={{ fontSize: 12, fontWeight: 700, color: pnlColor(visibleTotal) }}>
+          可见合计 {visibleTotal >= 0 ? "+" : ""}{fmtDec(visibleTotal, 2)}
         </div>
       </div>
       <div style={{ fontSize: 11, color: "#777", marginBottom: 10 }}>
@@ -646,8 +678,11 @@ function DailyLeaderDrilldownPanel({
       <div style={{ fontSize: 11, color: "#777", marginBottom: 10 }}>
         买入/卖出/结算列展示截至当日的累计值，PnL 列展示当日增量。
       </div>
+      <div style={{ fontSize: 11, color: "#777", marginBottom: 10 }}>
+        已隐藏 |市场当日合计| &lt; {DRILLDOWN_MARKET_MIN_ABS_PNL} USD 的市场卡片。
+      </div>
       <div style={{ display: "grid", gap: 10 }}>
-        {marketGroups.map((group) => (
+        {visibleMarketGroups.map((group) => (
           <div key={group.key} style={{ border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
             <div style={{ padding: "10px 12px", background: "#fafafa", borderBottom: "1px solid #eee" }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{group.marketSlug}</div>
@@ -675,8 +710,14 @@ function DailyLeaderDrilldownPanel({
                 <tbody>
                   {group.rows.map((row) => {
                     const cumulative = cumulativeByLeg[legKey(row.condition_id, row.token_id)];
+                    const rowBackground =
+                      row.close_state_eod === "settled"
+                        ? "#fffdf7"
+                        : row.close_state_eod === "redeemable"
+                          ? "#f8fbff"
+                          : undefined;
                     return (
-                      <tr key={row.token_id} style={{ background: row.close_state_eod === "settled" ? "#fffdf7" : undefined }}>
+                      <tr key={row.token_id} style={{ background: rowBackground }}>
                         <td style={{ padding: "8px 10px", borderBottom: "1px solid #f5f5f5", fontWeight: 600 }}>{row.outcome || "-"}</td>
                         <td style={{ ...cellR, padding: "8px 10px" }}>{fmtNum(cumulative?.buyFillCount ?? row.buy_fill_count, 0)}</td>
                         <td style={{ ...cellR, padding: "8px 10px" }}>{fmtDec(cumulative?.buySize ?? row.buy_size, 2)}</td>
@@ -705,10 +746,9 @@ function DailyLeaderDrilldownPanel({
       </div>
 
       <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-        <span style={{ color: "#666" }}>面板合计</span>
-        <span style={{ fontWeight: 700, color: pnlColor(panelTotal) }}>
-          {panelTotal >= 0 ? "+" : ""}{fmtDec(panelTotal, 2)}
-          {Math.abs(panelTotal - expectedTotal) > 1e-6 ? ` / 目标 ${fmtDec(expectedTotal, 2)}` : ""}
+        <span style={{ color: "#666" }}>可见合计</span>
+        <span style={{ fontWeight: 700, color: pnlColor(visibleTotal) }}>
+          {visibleTotal >= 0 ? "+" : ""}{fmtDec(visibleTotal, 2)}
         </span>
       </div>
     </div>
@@ -933,19 +973,6 @@ export function CopytradeLeaderPnlApp() {
     return out;
   }, [acctDailyLeader, selectedLeaderAddress]);
 
-  const selectedDrilldownExpectedTotal = useMemo(() => {
-    if (!selectedDrilldown) return 0;
-    let total = 0;
-    for (const row of acctDailyLeader) {
-      const addr = (row.leader_address || "").toLowerCase().trim();
-      if (addr !== selectedDrilldown.leaderAddress) continue;
-      if ((row.account_name || "default") !== selectedDrilldown.accountName) continue;
-      if (String(row.date_key || "").trim() !== selectedDrilldown.dateKey) continue;
-      total += row.total_pnl ?? 0;
-    }
-    return total;
-  }, [acctDailyLeader, selectedDrilldown]);
-
   useEffect(() => {
     setSelectedLeaderAddress(null);
     setShowLeaderDailyTable(true);
@@ -996,46 +1023,41 @@ export function CopytradeLeaderPnlApp() {
       setDrilldownLoading(true);
       setDrilldownError(null);
       try {
-        const selectedDayPromise = client
-          .from("copytrade_daily_leader_market_leg_pnl")
-          .select(
-            "date_key,leader_address,account_name,condition_id,token_id,market_slug,outcome,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size,open_size_eod,close_state_eod,realized_pnl_delta,unrealized_pnl_delta,total_pnl_delta,realized_pnl_eod,unrealized_pnl_eod,total_pnl_eod"
-          )
-          .eq("account_name", selectedDrilldown.accountName)
-          .eq("leader_address", selectedDrilldown.leaderAddress)
-          .eq("date_key", selectedDrilldown.dateKey)
-          .order("market_slug", { ascending: true })
-          .order("outcome", { ascending: true });
+        const selectedDayPromise = fetchPagedRows<DailyLeaderMarketLegPnl>((from, to) =>
+          client
+            .from("copytrade_daily_leader_market_leg_pnl")
+            .select(
+              "date_key,leader_address,account_name,condition_id,token_id,market_slug,outcome,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size,open_size_eod,close_state_eod,realized_pnl_delta,unrealized_pnl_delta,total_pnl_delta,realized_pnl_eod,unrealized_pnl_eod,total_pnl_eod"
+            )
+            .eq("account_name", selectedDrilldown.accountName)
+            .eq("leader_address", selectedDrilldown.leaderAddress)
+            .eq("date_key", selectedDrilldown.dateKey)
+            .order("market_slug", { ascending: true })
+            .order("outcome", { ascending: true })
+            .order("condition_id", { ascending: true })
+            .order("token_id", { ascending: true })
+            .range(from, to)
+        );
 
-        const cumulativeRowsPromise = (async () => {
-          const rows: DailyLeaderMarketLegPnl[] = [];
-          const pageSize = 1000;
-          for (let page = 0; page < 500; page += 1) {
-            const from = page * pageSize;
-            const to = from + pageSize - 1;
-            const res = await client
-              .from("copytrade_daily_leader_market_leg_pnl")
-              .select(
-                "condition_id,token_id,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size"
-              )
-              .eq("account_name", selectedDrilldown.accountName)
-              .eq("leader_address", selectedDrilldown.leaderAddress)
-              .lte("date_key", selectedDrilldown.dateKey)
-              .order("date_key", { ascending: true })
-              .range(from, to);
-            if (res.error) throw new Error(res.error.message);
-            const chunk = (res.data ?? []) as DailyLeaderMarketLegPnl[];
-            rows.push(...chunk);
-            if (chunk.length < pageSize) break;
-          }
-          return rows;
-        })();
+        const cumulativeRowsPromise = fetchPagedRows<LegCumulativeSourceRow>((from, to) =>
+          client
+            .from("copytrade_daily_leader_market_leg_pnl")
+            .select(
+              "date_key,condition_id,token_id,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size"
+            )
+            .eq("account_name", selectedDrilldown.accountName)
+            .eq("leader_address", selectedDrilldown.leaderAddress)
+            .lte("date_key", selectedDrilldown.dateKey)
+            .order("date_key", { ascending: true })
+            .order("condition_id", { ascending: true })
+            .order("token_id", { ascending: true })
+            .range(from, to)
+        );
 
-        const [selectedDayRes, cumulativeRows] = await Promise.all([selectedDayPromise, cumulativeRowsPromise]);
-        if (selectedDayRes.error) throw new Error(selectedDayRes.error.message);
+        const [selectedDayRows, cumulativeRows] = await Promise.all([selectedDayPromise, cumulativeRowsPromise]);
 
         if (!cancelled) {
-          setDrilldownRows((selectedDayRes.data ?? []) as DailyLeaderMarketLegPnl[]);
+          setDrilldownRows(selectedDayRows);
           setDrilldownCumulativeByLeg(buildLegCumulativeStats(cumulativeRows));
         }
       } catch (e: any) {
@@ -1185,7 +1207,6 @@ export function CopytradeLeaderPnlApp() {
           cumulativeByLeg={drilldownCumulativeByLeg}
           loading={drilldownLoading}
           error={drilldownError}
-          expectedTotal={selectedDrilldownExpectedTotal}
         />
       </div>
 

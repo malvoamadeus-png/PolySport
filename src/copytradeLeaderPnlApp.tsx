@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase, supabaseConfig } from "./supabaseClient";
@@ -24,6 +24,37 @@ type DailyLeaderPnl = {
   unrealized_pnl: number | null;
   total_pnl: number | null;
   market_count: number | null;
+};
+
+type DailyLeaderMarketLegPnl = {
+  date_key: string;
+  leader_address: string;
+  account_name: string | null;
+  condition_id: string;
+  token_id: string;
+  market_slug: string | null;
+  outcome: string | null;
+  buy_fill_count: number | null;
+  buy_size: number | null;
+  buy_cost_usd: number | null;
+  sell_fill_count: number | null;
+  sell_size: number | null;
+  sell_proceeds_usd: number | null;
+  settled_size: number | null;
+  open_size_eod: number | null;
+  close_state_eod: string | null;
+  realized_pnl_delta: number | null;
+  unrealized_pnl_delta: number | null;
+  total_pnl_delta: number | null;
+  realized_pnl_eod: number | null;
+  unrealized_pnl_eod: number | null;
+  total_pnl_eod: number | null;
+};
+
+type DrilldownSelection = {
+  accountName: string;
+  leaderAddress: string;
+  dateKey: string;
 };
 
 type PnlCurvePoint = { t: number; p: number };
@@ -60,6 +91,26 @@ function fmtNum(v: number | null | undefined, _digits = 0): string {
   const rounded = Math.round(v);
   const safe = Object.is(rounded, -0) ? 0 : rounded;
   return safe.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function fmtDec(v: number | null | undefined, digits = 2): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "-";
+  const safe = Object.is(v, -0) ? 0 : v;
+  return safe.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  });
+}
+
+function isNonZero(v: number | null | undefined): boolean {
+  return typeof v === "number" && Number.isFinite(v) && Math.abs(v) > 1e-9;
+}
+
+function closeStateLabel(v: string | null | undefined): string {
+  if (v === "settled") return "到期/赎回（含 merge 无法区分）";
+  if (v === "sold") return "卖出";
+  if (v === "mixed") return "部分卖出 / 部分到期或持有";
+  return "持有中";
 }
 
 function buildAccountEnvSuffixes(accountName: string): string[] {
@@ -266,7 +317,9 @@ function DailyLeaderPnlTable(
     leaderOrder,
     leaderRankByAddr,
     selectedLeaderAddress,
+    selectedDrilldown,
     onSelectLeader,
+    onSelectDrilldown,
   }: {
     data: DailyLeaderPnl[];
     dates: string[];
@@ -274,7 +327,9 @@ function DailyLeaderPnlTable(
     leaderOrder: string[];
     leaderRankByAddr: Record<string, number>;
     selectedLeaderAddress: string | null;
+    selectedDrilldown: DrilldownSelection | null;
     onSelectLeader: (addr: string) => void;
+    onSelectDrilldown: (selection: DrilldownSelection) => void;
   }
 ) {
   if (!data.length) return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>暂无 Leader 每日盈亏数据</div>;
@@ -282,10 +337,12 @@ function DailyLeaderPnlTable(
 
   const dateSet = new Set(dates);
   const dailyMap = new Map<string, Map<string, number>>();
+  const accountByLeader = new Map<string, string>();
   for (const r of data) {
     if (!dateSet.has(r.date_key)) continue;
     const addr = (r.leader_address || "").toLowerCase();
     if (!addr) continue;
+    if (!accountByLeader.has(addr)) accountByLeader.set(addr, r.account_name || "default");
     if (!dailyMap.has(addr)) dailyMap.set(addr, new Map());
     dailyMap.get(addr)!.set(r.date_key, r.total_pnl ?? 0);
   }
@@ -345,7 +402,47 @@ function DailyLeaderPnlTable(
               </td>
               {dates.map((d) => {
                 const v = row.get(d) ?? 0;
-                return <td key={d} style={{ ...cellR, color: pnlColor(v) }}>{v === 0 ? "-" : fmtNum(v, 2)}</td>;
+                const accountName = accountByLeader.get(addr) || "default";
+                const activeCell =
+                  selectedDrilldown?.leaderAddress === addr &&
+                  selectedDrilldown?.accountName === accountName &&
+                  selectedDrilldown?.dateKey === d;
+                if (!isNonZero(v)) {
+                  return <td key={d} style={{ ...cellR, color: pnlColor(v) }}>-</td>;
+                }
+                return (
+                  <td
+                    key={d}
+                    style={{
+                      ...cellR,
+                      color: pnlColor(v),
+                      background: activeCell ? "#eef3ff" : undefined,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSelectDrilldown({
+                          accountName,
+                          leaderAddress: addr,
+                          dateKey: d,
+                        })
+                      }
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        margin: 0,
+                        color: pnlColor(v),
+                        cursor: "pointer",
+                        font: "inherit",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      {fmtNum(v, 2)}
+                    </button>
+                  </td>
+                );
               })}
               <td style={{ ...cellR, fontWeight: 700, color: pnlColor(rangeTotal) }}>{fmtNum(rangeTotal, 2)}</td>
               <td style={{ ...cellR, fontWeight: 700, color: pnlColor(previousTotal) }}>{fmtNum(previousTotal, 2)}</td>
@@ -416,6 +513,137 @@ function LeaderDailyBarSection({
   );
 }
 
+function DailyLeaderDrilldownPanel({
+  selection,
+  rows,
+  loading,
+  error,
+  expectedTotal,
+}: {
+  selection: DrilldownSelection | null;
+  rows: DailyLeaderMarketLegPnl[];
+  loading: boolean;
+  error: string | null;
+  expectedTotal: number;
+}) {
+  if (!selection) {
+    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>点击上方某个 Leader 的单日利润后，这里会展示市场级归因明细。</div>;
+  }
+  if (loading) {
+    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>正在加载该日市场级归因明细...</div>;
+  }
+  if (error) {
+    return <div style={{ color: "#7a1b1b", fontSize: 12, padding: 8 }}>{error}</div>;
+  }
+  if (!rows.length) {
+    return <div style={{ color: "#888", fontSize: 12, padding: 8 }}>该日无市场级归因明细</div>;
+  }
+
+  const marketGroups = Array.from(
+    rows.reduce((map, row) => {
+      const key = `${row.condition_id}::${row.market_slug || row.condition_id}`;
+      const existing = map.get(key) || {
+        key,
+        conditionId: row.condition_id,
+        marketSlug: row.market_slug || row.condition_id,
+        rows: [] as DailyLeaderMarketLegPnl[],
+      };
+      existing.rows.push(row);
+      map.set(key, existing);
+      return map;
+    }, new Map<string, { key: string; conditionId: string; marketSlug: string; rows: DailyLeaderMarketLegPnl[] }>())
+      .values()
+  )
+    .map((group) => ({
+      ...group,
+      rows: [...group.rows].sort((a, b) => String(a.outcome || "").localeCompare(String(b.outcome || ""))),
+      marketTotal: group.rows.reduce((sum, row) => sum + (row.total_pnl_delta ?? 0), 0),
+    }))
+    .sort((a, b) => Math.abs(b.marketTotal) - Math.abs(a.marketTotal));
+
+  const panelTotal = rows.reduce((sum, row) => sum + (row.total_pnl_delta ?? 0), 0);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: "#555" }}>
+          账户 <b>{selection.accountName}</b> / Leader{" "}
+          <a href={`https://polymarket.com/profile/${selection.leaderAddress}`} target="_blank" rel="noreferrer" style={{ color: "#1a4fff", textDecoration: "none" }}>
+            {shortAddr(selection.leaderAddress)}
+          </a>{" "}
+          / 日期 <b>{selection.dateKey}</b>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: pnlColor(panelTotal) }}>
+          当日合计 {panelTotal >= 0 ? "+" : ""}{fmtDec(panelTotal, 2)}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {marketGroups.map((group) => (
+          <div key={group.key} style={{ border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ padding: "10px 12px", background: "#fafafa", borderBottom: "1px solid #eee" }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{group.marketSlug}</div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{group.conditionId}</div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "#fcfcfc" }}>
+                    <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>方向</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>买入</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>买入份额</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>买入金额</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>卖出</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>卖出份额</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>卖出金额</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>结算份额</th>
+                    <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>状态</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>已实现</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>未实现</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>当日利润</th>
+                    <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #f0f0f0" }}>截至当日累计PnL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((row) => (
+                    <tr key={row.token_id} style={{ background: row.close_state_eod === "settled" ? "#fffdf7" : undefined }}>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid #f5f5f5", fontWeight: 600 }}>{row.outcome || "-"}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtNum(row.buy_fill_count, 0)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtDec(row.buy_size, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtDec(row.buy_cost_usd, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtNum(row.sell_fill_count, 0)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtDec(row.sell_size, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtDec(row.sell_proceeds_usd, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px" }}>{fmtDec(row.settled_size, 2)}</td>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid #f5f5f5", color: "#666", whiteSpace: "nowrap" }}>{closeStateLabel(row.close_state_eod)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px", color: pnlColor(row.realized_pnl_delta ?? 0) }}>{fmtDec(row.realized_pnl_delta, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px", color: pnlColor(row.unrealized_pnl_delta ?? 0) }}>{fmtDec(row.unrealized_pnl_delta, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px", fontWeight: 700, color: pnlColor(row.total_pnl_delta ?? 0) }}>{fmtDec(row.total_pnl_delta, 2)}</td>
+                      <td style={{ ...cellR, padding: "8px 10px", color: pnlColor(row.total_pnl_eod ?? 0) }}>{fmtDec(row.total_pnl_eod, 2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: "8px 12px", borderTop: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+              <span style={{ color: "#666" }}>市场当日合计</span>
+              <span style={{ fontWeight: 700, color: pnlColor(group.marketTotal) }}>{group.marketTotal >= 0 ? "+" : ""}{fmtDec(group.marketTotal, 2)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+        <span style={{ color: "#666" }}>面板合计</span>
+        <span style={{ fontWeight: 700, color: pnlColor(panelTotal) }}>
+          {panelTotal >= 0 ? "+" : ""}{fmtDec(panelTotal, 2)}
+          {Math.abs(panelTotal - expectedTotal) > 1e-6 ? ` / 目标 ${fmtDec(expectedTotal, 2)}` : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function CopytradeLeaderPnlApp() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -428,6 +656,11 @@ export function CopytradeLeaderPnlApp() {
   const [selectedLeaderAddress, setSelectedLeaderAddress] = useState<string | null>(null);
   const [showLeaderDailyTable, setShowLeaderDailyTable] = useState(true);
   const [showLeaderDailyChart, setShowLeaderDailyChart] = useState(false);
+  const [selectedDrilldown, setSelectedDrilldown] = useState<DrilldownSelection | null>(null);
+  const [drilldownRows, setDrilldownRows] = useState<DailyLeaderMarketLegPnl[]>([]);
+  const [drilldownLoading, setDrilldownLoading] = useState(false);
+  const [drilldownError, setDrilldownError] = useState<string | null>(null);
+  const drilldownPanelRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = async () => {
     if (!supabase) return;
@@ -489,6 +722,8 @@ export function CopytradeLeaderPnlApp() {
       setCurveByAddress({});
       setDailyLeaderPnl([]);
       setAccountAddressByName({});
+      setDrilldownRows([]);
+      setDrilldownError(null);
     } finally {
       setLoading(false);
     }
@@ -623,10 +858,26 @@ export function CopytradeLeaderPnlApp() {
     return out;
   }, [acctDailyLeader, selectedLeaderAddress]);
 
+  const selectedDrilldownExpectedTotal = useMemo(() => {
+    if (!selectedDrilldown) return 0;
+    let total = 0;
+    for (const row of acctDailyLeader) {
+      const addr = (row.leader_address || "").toLowerCase().trim();
+      if (addr !== selectedDrilldown.leaderAddress) continue;
+      if ((row.account_name || "default") !== selectedDrilldown.accountName) continue;
+      if (String(row.date_key || "").trim() !== selectedDrilldown.dateKey) continue;
+      total += row.total_pnl ?? 0;
+    }
+    return total;
+  }, [acctDailyLeader, selectedDrilldown]);
+
   useEffect(() => {
     setSelectedLeaderAddress(null);
     setShowLeaderDailyTable(true);
     setShowLeaderDailyChart(false);
+    setSelectedDrilldown(null);
+    setDrilldownRows([]);
+    setDrilldownError(null);
   }, [currentAccount]);
 
   useEffect(() => {
@@ -635,6 +886,72 @@ export function CopytradeLeaderPnlApp() {
       setSelectedLeaderAddress(null);
     }
   }, [leaderOrder, selectedLeaderAddress]);
+
+  useEffect(() => {
+    if (!selectedDrilldown) return;
+    const stillExists = acctDailyLeader.some((row) => {
+      const addr = (row.leader_address || "").toLowerCase().trim();
+      return (
+        addr === selectedDrilldown.leaderAddress &&
+        (row.account_name || "default") === selectedDrilldown.accountName &&
+        String(row.date_key || "").trim() === selectedDrilldown.dateKey
+      );
+    });
+    if (!stillExists) {
+      setSelectedDrilldown(null);
+      setDrilldownRows([]);
+      setDrilldownError(null);
+    }
+  }, [acctDailyLeader, selectedDrilldown]);
+
+  useEffect(() => {
+    const client = supabase;
+    if (!client || !selectedDrilldown) {
+      setDrilldownRows([]);
+      setDrilldownError(null);
+      setDrilldownLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      setDrilldownLoading(true);
+      setDrilldownError(null);
+      try {
+        const res = await client
+          .from("copytrade_daily_leader_market_leg_pnl")
+          .select(
+            "date_key,leader_address,account_name,condition_id,token_id,market_slug,outcome,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size,open_size_eod,close_state_eod,realized_pnl_delta,unrealized_pnl_delta,total_pnl_delta,realized_pnl_eod,unrealized_pnl_eod,total_pnl_eod"
+          )
+          .eq("account_name", selectedDrilldown.accountName)
+          .eq("leader_address", selectedDrilldown.leaderAddress)
+          .eq("date_key", selectedDrilldown.dateKey)
+          .order("market_slug", { ascending: true })
+          .order("outcome", { ascending: true });
+        if (res.error) throw new Error(res.error.message);
+        if (!cancelled) {
+          setDrilldownRows((res.data ?? []) as DailyLeaderMarketLegPnl[]);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setDrilldownRows([]);
+          setDrilldownError(String(e?.message ?? e));
+        }
+      } finally {
+        if (!cancelled) setDrilldownLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDrilldown]);
+
+  useEffect(() => {
+    if (!selectedDrilldown || drilldownLoading) return;
+    drilldownPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [selectedDrilldown, drilldownLoading, drilldownRows, drilldownError]);
 
   const acctTotalPnl = useMemo(
     () => acctSummaryAll.reduce((s, r) => s + (r.total_pnl ?? 0), 0),
@@ -724,7 +1041,12 @@ export function CopytradeLeaderPnlApp() {
             leaderOrder={leaderOrder}
             leaderRankByAddr={leaderRankByAddr}
             selectedLeaderAddress={selectedLeaderAddress}
+            selectedDrilldown={selectedDrilldown}
             onSelectLeader={(addr) => setSelectedLeaderAddress(addr)}
+            onSelectDrilldown={(selection) => {
+              setSelectedLeaderAddress(selection.leaderAddress);
+              setSelectedDrilldown(selection);
+            }}
           />
         ) : null}
       </div>
@@ -746,6 +1068,17 @@ export function CopytradeLeaderPnlApp() {
             valuesByDate={selectedLeaderValuesByDate}
           />
         ) : null}
+      </div>
+
+      <div ref={drilldownPanelRef} style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Leader 单日归因明细</div>
+        <DailyLeaderDrilldownPanel
+          selection={selectedDrilldown}
+          rows={drilldownRows}
+          loading={drilldownLoading}
+          error={drilldownError}
+          expectedTotal={selectedDrilldownExpectedTotal}
+        />
       </div>
 
     </div>

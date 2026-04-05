@@ -105,6 +105,19 @@ const ACCOUNT_PNL_ADDRESS_FALLBACK: Record<string, string> = {
   "pm-2": "0x98cf229448e993e9a9c3b8ed34a5d5b221f6a088",
 };
 const DRILLDOWN_MARKET_MIN_ABS_PNL = 5;
+const DRILLDOWN_SIGNAL_OR_FILTER = [
+  "buy_fill_count.gt.0",
+  "sell_fill_count.gt.0",
+  "settled_size.gt.0",
+  "settled_size.lt.0",
+  "realized_pnl_delta.gt.0",
+  "realized_pnl_delta.lt.0",
+  "unrealized_pnl_delta.gt.0",
+  "unrealized_pnl_delta.lt.0",
+  "total_pnl_delta.gt.0",
+  "total_pnl_delta.lt.0",
+].join(",");
+const DRILLDOWN_TOKEN_CHUNK_SIZE = 100;
 
 const pnlColor = (v: number) => (v >= 0 ? "#1f7a1f" : "#b02a2a");
 const shortAddr = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}...${a.slice(-4)}` : a);
@@ -156,6 +169,15 @@ function legKey(conditionId: string, tokenId: string): string {
 
 function n(v: number | null | undefined): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const out: T[][] = [];
+  for (let idx = 0; idx < items.length; idx += size) {
+    out.push(items.slice(idx, idx + size));
+  }
+  return out;
 }
 
 function buildLegCumulativeStats(rows: LegCumulativeSourceRow[]): Record<string, LegCumulativeStats> {
@@ -1023,7 +1045,7 @@ export function CopytradeLeaderPnlApp() {
       setDrilldownLoading(true);
       setDrilldownError(null);
       try {
-        const selectedDayPromise = fetchPagedRows<DailyLeaderMarketLegPnl>((from, to) =>
+        const selectedDayRows = await fetchPagedRows<DailyLeaderMarketLegPnl>((from, to) =>
           client
             .from("copytrade_daily_leader_market_leg_pnl")
             .select(
@@ -1032,6 +1054,7 @@ export function CopytradeLeaderPnlApp() {
             .eq("account_name", selectedDrilldown.accountName)
             .eq("leader_address", selectedDrilldown.leaderAddress)
             .eq("date_key", selectedDrilldown.dateKey)
+            .or(DRILLDOWN_SIGNAL_OR_FILTER)
             .order("market_slug", { ascending: true })
             .order("outcome", { ascending: true })
             .order("condition_id", { ascending: true })
@@ -1039,22 +1062,38 @@ export function CopytradeLeaderPnlApp() {
             .range(from, to)
         );
 
-        const cumulativeRowsPromise = fetchPagedRows<LegCumulativeSourceRow>((from, to) =>
-          client
-            .from("copytrade_daily_leader_market_leg_pnl")
-            .select(
-              "date_key,condition_id,token_id,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size"
-            )
-            .eq("account_name", selectedDrilldown.accountName)
-            .eq("leader_address", selectedDrilldown.leaderAddress)
-            .lte("date_key", selectedDrilldown.dateKey)
-            .order("date_key", { ascending: true })
-            .order("condition_id", { ascending: true })
-            .order("token_id", { ascending: true })
-            .range(from, to)
+        const tokenIds = Array.from(
+          new Set(
+            selectedDayRows
+              .map((row) => String(row.token_id || "").trim())
+              .filter(Boolean)
+          )
         );
 
-        const [selectedDayRows, cumulativeRows] = await Promise.all([selectedDayPromise, cumulativeRowsPromise]);
+        let cumulativeRows: LegCumulativeSourceRow[] = [];
+        if (tokenIds.length) {
+          const tokenChunks = chunkArray(tokenIds, DRILLDOWN_TOKEN_CHUNK_SIZE);
+          const chunkResults = await Promise.all(
+            tokenChunks.map((tokenChunk) =>
+              fetchPagedRows<LegCumulativeSourceRow>((from, to) =>
+                client
+                  .from("copytrade_daily_leader_market_leg_pnl")
+                  .select(
+                    "date_key,condition_id,token_id,buy_fill_count,buy_size,buy_cost_usd,sell_fill_count,sell_size,sell_proceeds_usd,settled_size"
+                  )
+                  .eq("account_name", selectedDrilldown.accountName)
+                  .eq("leader_address", selectedDrilldown.leaderAddress)
+                  .lte("date_key", selectedDrilldown.dateKey)
+                  .in("token_id", tokenChunk)
+                  .order("date_key", { ascending: true })
+                  .order("condition_id", { ascending: true })
+                  .order("token_id", { ascending: true })
+                  .range(from, to)
+              )
+            )
+          );
+          cumulativeRows = chunkResults.flat();
+        }
 
         if (!cancelled) {
           setDrilldownRows(selectedDayRows);

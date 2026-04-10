@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Analytics } from "@vercel/analytics/react";
 import { App } from "./App";
+import { CopytradeDailyCompareApp } from "./copytradeDailyCompareApp";
 import { CopytradeLeaderPnlApp } from "./copytradeLeaderPnlApp";
 import { GapAnalysisApp } from "./copytradeGapAnalysis";
 import { LoginPage } from "./LoginPage";
@@ -49,6 +50,14 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           element={
             <RoleRoute required="basic">
               <App />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/daily-compare"
+          element={
+            <RoleRoute required="advanced">
+              <CopytradeDailyCompareApp />
             </RoleRoute>
           }
         />

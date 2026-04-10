@@ -611,6 +611,12 @@ export function App() {
         <h2 style={{ margin: 0 }}>PolySport 看板</h2>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <Link
+            to="/daily-compare"
+            style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
+          >
+            日盈亏对照
+          </Link>
+          <Link
             to="/leader-attribution"
             style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
           >

@@ -268,8 +268,10 @@ function buildRecentDateWindow(data: DailyLeaderPnl[], days = 14): string[] {
     )
   ).sort();
   if (!keys.length) return [];
-  const endKey = keys[keys.length - 1];
-  const end = parseDateKeyUTC(endKey);
+  const maxKeyDate = parseDateKeyUTC(keys[keys.length - 1]);
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const end = maxKeyDate && maxKeyDate.getTime() < todayUtc.getTime() ? maxKeyDate : todayUtc;
   if (!end) return [];
   const out: string[] = [];
   for (let i = days - 1; i >= 0; i -= 1) {

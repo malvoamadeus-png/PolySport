@@ -35,8 +35,14 @@ type CompareMarketLegRow = {
   our_total_pnl: number | null;
 };
 
+const LEADER_PNL_VISIBLE_THRESHOLD = 50;
+
 function n(v: number | null | undefined): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+function isVisibleLeaderPnl(v: number | null | undefined): boolean {
+  return typeof v === "number" && Number.isFinite(v) && Math.abs(v) >= LEADER_PNL_VISIBLE_THRESHOLD;
 }
 
 function fmtUsd(v: number | null | undefined): string {
@@ -44,6 +50,15 @@ function fmtUsd(v: number | null | undefined): string {
   return v.toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
+  });
+}
+
+function fmtLeaderUsd(v: number | null | undefined): string {
+  if (typeof v !== "number" || Number.isNaN(v)) return "-";
+  const rounded = Math.round(v);
+  const safe = Object.is(rounded, -0) ? 0 : rounded;
+  return safe.toLocaleString(undefined, {
+    maximumFractionDigits: 0,
   });
 }
 
@@ -124,8 +139,8 @@ export function CopytradeDailyCompareApp() {
           ),
         ]);
         if (cancelled) return;
-        setSummaryRows(summary);
-        setMarketRows(legs);
+        setSummaryRows(summary.filter((row) => isVisibleLeaderPnl(row.leader_total_pnl)));
+        setMarketRows(legs.filter((row) => isVisibleLeaderPnl(row.leader_total_pnl)));
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "加载失败");
@@ -326,7 +341,7 @@ export function CopytradeDailyCompareApp() {
                         </td>
                         <td style={cellStyle}>
                           <span style={{ color: pnlColor(row.leader_total_pnl) }}>
-                            {fmtUsd(row.leader_total_pnl)}
+                            {fmtLeaderUsd(row.leader_total_pnl)}
                           </span>
                         </td>
                         <td style={cellStyle}>
@@ -340,7 +355,7 @@ export function CopytradeDailyCompareApp() {
                           </span>
                         </td>
                         <td style={cellStyle}>
-                          L {fmtUsd(row.leader_excluded_pnl)} / 我 {fmtUsd(row.our_excluded_pnl)}
+                          L {fmtLeaderUsd(row.leader_excluded_pnl)} / 我 {fmtUsd(row.our_excluded_pnl)}
                         </td>
                         <td style={cellStyleLeft}>
                           {row.updated_at ? row.updated_at.replace("T", " ").slice(0, 19) : "-"}
@@ -358,9 +373,9 @@ export function CopytradeDailyCompareApp() {
                             }}
                           >
                             <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>
-                              主明细合计: Leader {fmtUsd(row.visible_leader_pnl)} / 我{" "}
+                              主明细合计: Leader {fmtLeaderUsd(row.visible_leader_pnl)} / 我{" "}
                               {fmtUsd(row.visible_our_pnl)}，已排除: Leader{" "}
-                              {fmtUsd(row.leader_excluded_pnl)} / 我{" "}
+                              {fmtLeaderUsd(row.leader_excluded_pnl)} / 我{" "}
                               {fmtUsd(row.our_excluded_pnl)}
                             </div>
 
@@ -413,7 +428,7 @@ export function CopytradeDailyCompareApp() {
                                         </td>
                                         <td style={compactCellLeft}>{outcomeLabel(leg.outcome)}</td>
                                         <td style={{ ...compactCellRight, color: pnlColor(leg.leader_total_pnl) }}>
-                                          {fmtUsd(leg.leader_total_pnl)}
+                                          {fmtLeaderUsd(leg.leader_total_pnl)}
                                         </td>
                                         <td style={{ ...compactCellRight, color: pnlColor(leg.our_total_pnl) }}>
                                           {fmtUsd(leg.our_total_pnl)}

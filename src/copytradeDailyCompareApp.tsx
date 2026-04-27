@@ -42,6 +42,8 @@ const SUMMARY_SELECT =
 const MARKET_LEG_SELECT =
   "date_key,account_name,leader_address,condition_id,token_id,market_slug,outcome,exclusion_reason,leader_buy_fill_count,leader_buy_usd,leader_buy_avg_price,leader_total_pnl,our_buy_fill_count,our_buy_usd,our_buy_avg_price,our_total_pnl";
 
+type PnlSortKey = "delta_abs" | "leader_desc" | "our_desc";
+
 function n(v: number | null | undefined): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
@@ -162,6 +164,7 @@ export function CopytradeDailyCompareApp() {
   const [selectedDate, setSelectedDate] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showExcluded, setShowExcluded] = useState(false);
+  const [sortKey, setSortKey] = useState<PnlSortKey>("delta_abs");
 
   useEffect(() => {
     let cancelled = false;
@@ -261,10 +264,19 @@ export function CopytradeDailyCompareApp() {
   }, [selectedAccount, selectedDate]);
 
   const currentSummaryRows = useMemo(() => {
-    return summaryRows
-      .filter((row) => row.account_name === selectedAccount && row.date_key === selectedDate)
-      .sort((a, b) => Math.abs(n(b.delta_pnl)) - Math.abs(n(a.delta_pnl)));
-  }, [selectedAccount, selectedDate, summaryRows]);
+    const rows = summaryRows.filter(
+      (row) => row.account_name === selectedAccount && row.date_key === selectedDate,
+    );
+    return [...rows].sort((a, b) => {
+      if (sortKey === "leader_desc") {
+        return n(b.leader_total_pnl) - n(a.leader_total_pnl);
+      }
+      if (sortKey === "our_desc") {
+        return n(b.our_total_pnl) - n(a.our_total_pnl);
+      }
+      return Math.abs(n(b.delta_pnl)) - Math.abs(n(a.delta_pnl));
+    });
+  }, [selectedAccount, selectedDate, sortKey, summaryRows]);
 
   const currentMarketRows = useMemo(() => {
     return marketRows.filter(
@@ -353,7 +365,7 @@ export function CopytradeDailyCompareApp() {
                   fontSize: 12,
                 }}
               >
-              {accountName}
+                {accountName}
               </button>
             ))}
             {availableDates.length ? (
@@ -398,6 +410,25 @@ export function CopytradeDailyCompareApp() {
                 </span>
               </div>
             ) : null}
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+              }}
+            >
+              排序
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as PnlSortKey)}
+                style={dateSelectStyle}
+              >
+                <option value="delta_abs">差值绝对值</option>
+                <option value="leader_desc">Leader 盈亏降序</option>
+                <option value="our_desc">我的盈亏降序</option>
+              </select>
+            </label>
             <label
               style={{
                 display: "inline-flex",
@@ -451,6 +482,12 @@ export function CopytradeDailyCompareApp() {
                     ? leaderLegs
                     : leaderLegs.filter((leg) => !leg.exclusion_reason);
                   const sortedLegs = [...visibleLegs].sort((a, b) => {
+                    if (sortKey === "leader_desc") {
+                      return n(b.leader_total_pnl) - n(a.leader_total_pnl);
+                    }
+                    if (sortKey === "our_desc") {
+                      return n(b.our_total_pnl) - n(a.our_total_pnl);
+                    }
                     const marketCmp = marketTitle(a).localeCompare(marketTitle(b));
                     if (marketCmp !== 0) return marketCmp;
                     return String(a.outcome || "").localeCompare(String(b.outcome || ""));

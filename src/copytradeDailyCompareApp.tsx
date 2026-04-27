@@ -36,6 +36,11 @@ type CompareMarketLegRow = {
 };
 
 const LEADER_PNL_VISIBLE_THRESHOLD = 50;
+const PAGE_SIZE = 1000;
+const SUMMARY_SELECT =
+  "date_key,account_name,leader_address,leader_total_pnl,our_total_pnl,delta_pnl,leader_excluded_pnl,our_excluded_pnl,visible_leader_pnl,visible_our_pnl,updated_at";
+const MARKET_LEG_SELECT =
+  "date_key,account_name,leader_address,condition_id,token_id,market_slug,outcome,exclusion_reason,leader_buy_fill_count,leader_buy_usd,leader_buy_avg_price,leader_total_pnl,our_buy_fill_count,our_buy_usd,our_buy_avg_price,our_total_pnl";
 
 function n(v: number | null | undefined): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -87,32 +92,74 @@ function pnlColor(v: number | null | undefined): string {
   return n(v) >= 0 ? "#1f7a1f" : "#b02a2a";
 }
 
-async function fetchAllRows<T>(table: string, selectCols: string): Promise<T[]> {
+function formatUtc8Timestamp(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.replace("T", " ").slice(0, 19);
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return [
+    `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`,
+    `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}`,
+  ].join(" ");
+}
+
+async function fetchSummaryRows(): Promise<CompareSummaryRow[]> {
   if (!supabase) return [];
-  const out: T[] = [];
-  const pageSize = 1000;
+  const out: CompareSummaryRow[] = [];
   for (let page = 0; page < 100; page += 1) {
-    const from = page * pageSize;
-    const to = from + pageSize - 1;
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
     const res = await supabase
-      .from(table)
-      .select(selectCols)
+      .from("copytrade_compare_daily_summary")
+      .select(SUMMARY_SELECT)
       .order("date_key", { ascending: false })
+      .order("account_name", { ascending: true })
+      .order("leader_address", { ascending: true })
       .range(from, to);
     if (res.error) throw new Error(res.error.message);
-    const chunk = (res.data ?? []) as T[];
+    const chunk = (res.data ?? []) as CompareSummaryRow[];
     out.push(...chunk);
-    if (chunk.length < pageSize) break;
+    if (chunk.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+
+async function fetchMarketRowsForPage(
+  dateKey: string,
+  accountName: string,
+): Promise<CompareMarketLegRow[]> {
+  if (!supabase || !dateKey || !accountName) return [];
+  const out: CompareMarketLegRow[] = [];
+  for (let page = 0; page < 100; page += 1) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const res = await supabase
+      .from("copytrade_compare_daily_market_leg")
+      .select(MARKET_LEG_SELECT)
+      .eq("date_key", dateKey)
+      .eq("account_name", accountName)
+      .order("leader_address", { ascending: true })
+      .order("condition_id", { ascending: true })
+      .order("token_id", { ascending: true })
+      .range(from, to);
+    if (res.error) throw new Error(res.error.message);
+    const chunk = (res.data ?? []) as CompareMarketLegRow[];
+    out.push(...chunk.filter((row) => isVisibleLeaderPnl(row.leader_total_pnl)));
+    if (chunk.length < PAGE_SIZE) break;
   }
   return out;
 }
 
 export function CopytradeDailyCompareApp() {
-  const [loading, setLoading] = useState(true);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [marketLoading, setMarketLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [marketError, setMarketError] = useState<string | null>(null);
   const [summaryRows, setSummaryRows] = useState<CompareSummaryRow[]>([]);
   const [marketRows, setMarketRows] = useState<CompareMarketLegRow[]>([]);
   const [selectedAccount, setSelectedAccount] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showExcluded, setShowExcluded] = useState(false);
 
@@ -122,30 +169,20 @@ export function CopytradeDailyCompareApp() {
     async function run() {
       if (!supabase) {
         setError("Supabase 未配置");
-        setLoading(false);
+        setSummaryLoading(false);
         return;
       }
-      setLoading(true);
+      setSummaryLoading(true);
       setError(null);
       try {
-        const [summary, legs] = await Promise.all([
-          fetchAllRows<CompareSummaryRow>(
-            "copytrade_compare_daily_summary",
-            "date_key,account_name,leader_address,leader_total_pnl,our_total_pnl,delta_pnl,leader_excluded_pnl,our_excluded_pnl,visible_leader_pnl,visible_our_pnl,updated_at",
-          ),
-          fetchAllRows<CompareMarketLegRow>(
-            "copytrade_compare_daily_market_leg",
-            "date_key,account_name,leader_address,condition_id,token_id,market_slug,outcome,exclusion_reason,leader_buy_fill_count,leader_buy_usd,leader_buy_avg_price,leader_total_pnl,our_buy_fill_count,our_buy_usd,our_buy_avg_price,our_total_pnl",
-          ),
-        ]);
+        const summary = await fetchSummaryRows();
         if (cancelled) return;
         setSummaryRows(summary.filter((row) => isVisibleLeaderPnl(row.leader_total_pnl)));
-        setMarketRows(legs.filter((row) => isVisibleLeaderPnl(row.leader_total_pnl)));
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "加载失败");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setSummaryLoading(false);
       }
     }
 
@@ -167,18 +204,61 @@ export function CopytradeDailyCompareApp() {
     }
   }, [availableAccounts, selectedAccount]);
 
-  const latestDateByAccount = useMemo(() => {
-    const out = new Map<string, string>();
+  const availableDates = useMemo(() => {
+    const dates = new Set<string>();
     for (const row of summaryRows) {
       const accountName = String(row.account_name || "").trim();
-      if (!accountName) continue;
-      const current = out.get(accountName);
-      if (!current || row.date_key > current) out.set(accountName, row.date_key);
+      if (accountName === selectedAccount && row.date_key) {
+        dates.add(row.date_key);
+      }
     }
-    return out;
-  }, [summaryRows]);
+    return Array.from(dates).sort((a, b) => b.localeCompare(a));
+  }, [selectedAccount, summaryRows]);
 
-  const selectedDate = latestDateByAccount.get(selectedAccount) ?? "";
+  useEffect(() => {
+    if (!selectedAccount || availableDates.length === 0) {
+      if (selectedDate) setSelectedDate("");
+      return;
+    }
+    if (!selectedDate || !availableDates.includes(selectedDate)) {
+      setSelectedDate(availableDates[0]);
+    }
+  }, [availableDates, selectedAccount, selectedDate]);
+
+  useEffect(() => {
+    setExpanded({});
+  }, [selectedAccount, selectedDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!supabase || !selectedAccount || !selectedDate) {
+        setMarketRows([]);
+        setMarketLoading(false);
+        setMarketError(null);
+        return;
+      }
+      setMarketLoading(true);
+      setMarketError(null);
+      try {
+        const rows = await fetchMarketRowsForPage(selectedDate, selectedAccount);
+        if (!cancelled) setMarketRows(rows);
+      } catch (err) {
+        if (!cancelled) {
+          setMarketRows([]);
+          setMarketError(err instanceof Error ? err.message : "明细加载失败");
+        }
+      } finally {
+        if (!cancelled) setMarketLoading(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAccount, selectedDate]);
 
   const currentSummaryRows = useMemo(() => {
     return summaryRows
@@ -201,6 +281,14 @@ export function CopytradeDailyCompareApp() {
     }
     return out;
   }, [currentMarketRows]);
+
+  const selectedDateIndex = availableDates.indexOf(selectedDate);
+  const canGoNewer = selectedDateIndex > 0;
+  const canGoOlder = selectedDateIndex >= 0 && selectedDateIndex < availableDates.length - 1;
+  const goToDateIndex = (index: number) => {
+    const nextDate = availableDates[index];
+    if (nextDate) setSelectedDate(nextDate);
+  };
 
   return (
     <div
@@ -242,10 +330,11 @@ export function CopytradeDailyCompareApp() {
       {!supabaseConfig.ok ? (
         <div style={{ color: "#b02a2a" }}>Supabase 未配置，页面不可用。</div>
       ) : null}
-      {loading ? <div>加载中...</div> : null}
+      {summaryLoading ? <div>加载中...</div> : null}
       {error ? <div style={{ color: "#b02a2a" }}>{error}</div> : null}
+      {marketError ? <div style={{ color: "#b02a2a" }}>明细加载失败：{marketError}</div> : null}
 
-      {!loading && !error ? (
+      {!summaryLoading && !error ? (
         <>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             {availableAccounts.map((accountName) => (
@@ -264,16 +353,58 @@ export function CopytradeDailyCompareApp() {
                   fontSize: 12,
                 }}
               >
-                {accountName}
+              {accountName}
               </button>
             ))}
+            {availableDates.length ? (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  marginLeft: "auto",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => goToDateIndex(selectedDateIndex + 1)}
+                  disabled={!canGoOlder}
+                  style={dateButtonStyle}
+                >
+                  较早
+                </button>
+                <select
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  style={dateSelectStyle}
+                >
+                  {availableDates.map((date) => (
+                    <option key={date} value={date}>
+                      {date}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => goToDateIndex(selectedDateIndex - 1)}
+                  disabled={!canGoNewer}
+                  style={dateButtonStyle}
+                >
+                  较新
+                </button>
+                <span style={{ color: "#777" }}>
+                  明细 {marketLoading ? "加载中" : `${currentMarketRows.length} 行`}
+                </span>
+              </div>
+            ) : null}
             <label
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
                 fontSize: 12,
-                marginLeft: "auto",
+                marginLeft: availableDates.length ? 0 : "auto",
               }}
             >
               <input
@@ -295,7 +426,7 @@ export function CopytradeDailyCompareApp() {
                     "我的今日总盈亏",
                     "差值",
                     "已排除盈亏",
-                    "更新时间",
+                    "更新时间(UTC+8)",
                   ].map((label) => (
                     <th
                       key={label}
@@ -313,7 +444,7 @@ export function CopytradeDailyCompareApp() {
               </thead>
               <tbody>
                 {currentSummaryRows.map((row) => {
-                  const leaderKey = `${row.account_name}::${row.leader_address}`;
+                  const leaderKey = `${row.date_key}::${row.account_name}::${row.leader_address}`;
                   const isOpen = Boolean(expanded[leaderKey]);
                   const leaderLegs = marketRowsByLeader.get(row.leader_address) ?? [];
                   const visibleLegs = showExcluded
@@ -358,7 +489,7 @@ export function CopytradeDailyCompareApp() {
                           L {fmtLeaderUsd(row.leader_excluded_pnl)} / 我 {fmtUsd(row.our_excluded_pnl)}
                         </td>
                         <td style={cellStyleLeft}>
-                          {row.updated_at ? row.updated_at.replace("T", " ").slice(0, 19) : "-"}
+                          {formatUtc8Timestamp(row.updated_at)}
                         </td>
                       </tr>
 
@@ -379,7 +510,9 @@ export function CopytradeDailyCompareApp() {
                               {fmtUsd(row.our_excluded_pnl)}
                             </div>
 
-                            {sortedLegs.length === 0 ? (
+                            {marketLoading ? (
+                              <div style={{ fontSize: 12, color: "#888" }}>明细加载中...</div>
+                            ) : sortedLegs.length === 0 ? (
                               <div style={{ fontSize: 12, color: "#888" }}>
                                 没有可显示的市场明细。
                               </div>
@@ -481,6 +614,23 @@ const smallCell = {
   fontSize: 11,
   textAlign: "left" as const,
   whiteSpace: "nowrap" as const,
+};
+
+const dateButtonStyle = {
+  padding: "5px 8px",
+  border: "1px solid #ddd",
+  borderRadius: 6,
+  background: "#fff",
+  cursor: "pointer",
+  fontSize: 12,
+};
+
+const dateSelectStyle = {
+  padding: "5px 8px",
+  border: "1px solid #ddd",
+  borderRadius: 6,
+  background: "#fff",
+  fontSize: 12,
 };
 
 const compactHeadBase = {

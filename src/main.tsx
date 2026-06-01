@@ -5,7 +5,6 @@ import { Analytics } from "@vercel/analytics/react";
 import { App } from "./App";
 import { CopytradeDailyCompareApp } from "./copytradeDailyCompareApp";
 import { CopytradeLeaderPnlApp } from "./copytradeLeaderPnlApp";
-import { GapAnalysisApp } from "./copytradeGapAnalysis";
 import { LoginPage } from "./LoginPage";
 import { useAccess, type AccessRole } from "./useAccess";
 
@@ -66,14 +65,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           element={
             <RoleRoute required="advanced">
               <CopytradeLeaderPnlApp />
-            </RoleRoute>
-          }
-        />
-        <Route
-          path="/gap-analysis"
-          element={
-            <RoleRoute required="advanced">
-              <GapAnalysisApp />
             </RoleRoute>
           }
         />

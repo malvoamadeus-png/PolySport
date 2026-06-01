@@ -37,6 +37,7 @@ type CompareMarketLegRow = {
 
 const LEADER_PNL_VISIBLE_THRESHOLD = 50;
 const PAGE_SIZE = 1000;
+const REFRESH_INTERVAL_MS = 60_000;
 const SUMMARY_SELECT =
   "date_key,account_name,leader_address,leader_total_pnl,our_total_pnl,delta_pnl,leader_excluded_pnl,our_excluded_pnl,visible_leader_pnl,visible_our_pnl,updated_at";
 const MARKET_LEG_SELECT =
@@ -169,13 +170,13 @@ export function CopytradeDailyCompareApp() {
   useEffect(() => {
     let cancelled = false;
 
-    async function run() {
+    async function run(showLoading = true) {
       if (!supabase) {
         setError("Supabase 未配置");
         setSummaryLoading(false);
         return;
       }
-      setSummaryLoading(true);
+      if (showLoading) setSummaryLoading(true);
       setError(null);
       try {
         const summary = await fetchSummaryRows();
@@ -185,13 +186,17 @@ export function CopytradeDailyCompareApp() {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "加载失败");
       } finally {
-        if (!cancelled) setSummaryLoading(false);
+        if (!cancelled && showLoading) setSummaryLoading(false);
       }
     }
 
     void run();
+    const intervalId = window.setInterval(() => {
+      void run(false);
+    }, REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -235,14 +240,14 @@ export function CopytradeDailyCompareApp() {
   useEffect(() => {
     let cancelled = false;
 
-    async function run() {
+    async function run(showLoading = true) {
       if (!supabase || !selectedAccount || !selectedDate) {
         setMarketRows([]);
         setMarketLoading(false);
         setMarketError(null);
         return;
       }
-      setMarketLoading(true);
+      if (showLoading) setMarketLoading(true);
       setMarketError(null);
       try {
         const rows = await fetchMarketRowsForPage(selectedDate, selectedAccount);
@@ -253,13 +258,17 @@ export function CopytradeDailyCompareApp() {
           setMarketError(err instanceof Error ? err.message : "明细加载失败");
         }
       } finally {
-        if (!cancelled) setMarketLoading(false);
+        if (!cancelled && showLoading) setMarketLoading(false);
       }
     }
 
     void run();
+    const intervalId = window.setInterval(() => {
+      void run(false);
+    }, REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [selectedAccount, selectedDate]);
 
@@ -332,9 +341,6 @@ export function CopytradeDailyCompareApp() {
           </Link>
           <Link to="/leader-attribution" style={{ color: "#2d6cdf", textDecoration: "none" }}>
             Leader 归因页
-          </Link>
-          <Link to="/gap-analysis" style={{ color: "#2d6cdf", textDecoration: "none" }}>
-            跟单分析
           </Link>
         </div>
       </div>
@@ -546,6 +552,9 @@ export function CopytradeDailyCompareApp() {
                               {fmtLeaderUsd(row.leader_excluded_pnl)} / 我{" "}
                               {fmtUsd(row.our_excluded_pnl)}
                             </div>
+                            <div style={{ fontSize: 12, color: "#777", marginBottom: 10 }}>
+                              盈亏列为当日增量；买次、买额、买均价为截至当日累计。
+                            </div>
 
                             {marketLoading ? (
                               <div style={{ fontSize: 12, color: "#888" }}>明细加载中...</div>
@@ -567,14 +576,14 @@ export function CopytradeDailyCompareApp() {
                                       {[
                                         "市场题目",
                                         "方向",
-                                        "leader盈亏",
-                                        "我的盈亏",
-                                        "leader买次",
-                                        "leader买额",
-                                        "leader买均价",
-                                        "我的买次",
-                                        "我的买额",
-                                        "我的买均价",
+                                        "leader今日盈亏",
+                                        "我的今日盈亏",
+                                        "leader累计买次",
+                                        "leader累计买额",
+                                        "leader累计买均价",
+                                        "我的累计买次",
+                                        "我的累计买额",
+                                        "我的累计买均价",
                                       ].map((label) => (
                                         <th
                                           key={label}

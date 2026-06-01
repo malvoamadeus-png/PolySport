@@ -1,5 +1,5 @@
 const SESSION_COOKIE_NAME = "polysport_session";
-const ADVANCED_PATH_PREFIXES = ["/leader-attribution", "/gap-analysis"];
+const ADVANCED_PATH_PREFIXES = ["/leader-attribution"];
 
 let cachedSecret = null;
 let cachedKeyPromise = null;

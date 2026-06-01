@@ -28,8 +28,6 @@ type AddressMetric = {
   win_rate: number | null;
   avg_trade_price: number | null;
   realized_edge_score: number | null;
-  skew_unweighted: number | null;
-  skew_weighted: number | null;
   ct_score_total_100: number | null;
   ulcer_index: number | null;
   equity_r2: number | null;
@@ -50,8 +48,6 @@ type NumericKey = keyof Pick<
   | "win_rate"
   | "avg_trade_price"
   | "realized_edge_score"
-  | "skew_unweighted"
-  | "skew_weighted"
   | "ct_score_total_100"
   | "ulcer_index"
   | "equity_r2"
@@ -70,8 +66,6 @@ const FILTERS: FilterDef[] = [
   { key: "win_rate", label: "Win Rate", format: "pct" },
   { key: "avg_trade_price", label: "Avg Trade Price", format: "num" },
   { key: "realized_edge_score", label: "Realized Edge", format: "num" },
-  { key: "skew_unweighted", label: "Skew (U)", format: "num" },
-  { key: "skew_weighted", label: "Skew (W)", format: "num" },
   { key: "ct_score_total_100", label: "CT Score", format: "num" },
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
@@ -483,7 +477,7 @@ export function App() {
       const pageSize = 1000;
       const allRows: AddressMetric[] = [];
       const selectCols =
-        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,realized_edge_score,skew_unweighted,skew_weighted,ct_score_total_100,ulcer_index,equity_r2";
+        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,realized_edge_score,ct_score_total_100,ulcer_index,equity_r2";
 
       // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
       for (let page = 0; page < 50; page += 1) {
@@ -622,12 +616,6 @@ export function App() {
           >
             Leader 归因页
           </Link>
-          <Link
-            to="/gap-analysis"
-            style={{ fontSize: 12, color: "#2d6cdf", textDecoration: "none" }}
-          >
-            跟单分析
-          </Link>
           {!isAdvanced ? (
             <Link
               to="/login?required=advanced&next=%2Fleader-attribution"
@@ -702,8 +690,6 @@ export function App() {
           <div style={{ marginBottom: 8 }}><strong>Win Rate</strong> — 胜率：盈利交易数 / 总交易数</div>
           <div style={{ marginBottom: 8 }}><strong>Avg Trade Price</strong> — 平均交易价格：所有交易的平均成交价</div>
           <div style={{ marginBottom: 8 }}><strong>Realized Edge</strong> — 已实现信息优势：只统计最终兑付已经明确为 0/1 的 token，按资金成本加权计算 `resolution - entry_price`，越高越好</div>
-          <div style={{ marginBottom: 8 }}><strong>Skew (U)</strong> — 非加权偏度：按每个仓位 ROI 等权，观察交易风格的尾部特征</div>
-          <div style={{ marginBottom: 8 }}><strong>Skew (W)</strong> — 加权偏度：按仓位权重计算 ROI 偏度，更接近真实资金风险暴露</div>
           <div style={{ marginBottom: 8 }}><strong>Ulcer Index (UI)</strong> — 溃疡指数：衡量回撤深度和持续时间的综合惩罚，值越低越好</div>
           <div style={{ marginBottom: 8 }}><strong>R²</strong> — 决定系数：净值曲线与完美直线的拟合度，越接近 1 说明盈利越稳定</div>
         </div>
@@ -864,8 +850,6 @@ export function App() {
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Win%</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>AvgPx</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Realized Edge</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Skew(U)</th>
-                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Skew(W)</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>ROI</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PF</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>MDD</th>
@@ -956,8 +940,6 @@ export function App() {
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.avg_trade_price, 4)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.realized_edge_score, 4)}</td>
-                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.skew_unweighted, 4)}</td>
-                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.skew_weighted, 4)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.roi)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.profit_factor, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.max_drawdown)}</td>

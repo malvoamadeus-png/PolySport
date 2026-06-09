@@ -28,7 +28,12 @@ type AddressMetric = {
   win_rate: number | null;
   avg_trade_price: number | null;
   realized_edge_score: number | null;
+  avg_open_top5_depth_usd: number | null;
+  avg_open_settlement_days: number | null;
   ct_score_total_100: number | null;
+  copytrade_value_score: number | null;
+  copytrade_value_level: string | null;
+  copytrade_value_exclusion_reason: string | null;
   ulcer_index: number | null;
   equity_r2: number | null;
   confidence: string | null;
@@ -48,6 +53,8 @@ type NumericKey = keyof Pick<
   | "win_rate"
   | "avg_trade_price"
   | "realized_edge_score"
+  | "avg_open_top5_depth_usd"
+  | "avg_open_settlement_days"
   | "ct_score_total_100"
   | "ulcer_index"
   | "equity_r2"
@@ -66,6 +73,8 @@ const FILTERS: FilterDef[] = [
   { key: "win_rate", label: "Win Rate", format: "pct" },
   { key: "avg_trade_price", label: "Avg Trade Price", format: "num" },
   { key: "realized_edge_score", label: "Realized Edge", format: "num" },
+  { key: "avg_open_top5_depth_usd", label: "Open Top5 Depth", format: "num" },
+  { key: "avg_open_settlement_days", label: "Open Settle Days", format: "num" },
   { key: "ct_score_total_100", label: "CT Score", format: "num" },
   { key: "roi", label: "ROI", format: "pct" },
   { key: "profit_factor", label: "Profit Factor", format: "num" },
@@ -477,7 +486,7 @@ export function App() {
       const pageSize = 1000;
       const allRows: AddressMetric[] = [];
       const selectCols =
-        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,realized_edge_score,ct_score_total_100,ulcer_index,equity_r2";
+        "address,total_pnl,roi,profit_factor,max_drawdown,sharpe,confidence,source_tags,updated_at,current_position_value_usd,total_trades,winning_trades,losing_trades,win_rate,avg_trade_price,realized_edge_score,avg_open_top5_depth_usd,avg_open_settlement_days,ct_score_total_100,copytrade_value_score,copytrade_value_level,copytrade_value_exclusion_reason,ulcer_index,equity_r2";
 
       // Supabase REST 常见上限是 1000 行，分页拉取避免被截断导致“地址消失”
       for (let page = 0; page < 50; page += 1) {
@@ -845,11 +854,15 @@ export function App() {
                   <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>市场来源</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PnL</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>CT Score</th>
+                  <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>跟单价值</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>跟单分</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Value</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Trades</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Win%</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>AvgPx</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Realized Edge</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Open Top5 Depth</th>
+                  <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>Open Settle Days</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>ROI</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>PF</th>
                   <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 2, background: "#fafafa" }}>MDD</th>
@@ -935,11 +948,24 @@ export function App() {
                     </td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_pnl, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.ct_score_total_100, 1)}</td>
+                    <td style={{ padding: 10 }}>
+                      {r.copytrade_value_level === "not_worth_copying"
+                        ? "不值得跟单"
+                        : r.copytrade_value_level || "-"}
+                      {r.copytrade_value_exclusion_reason ? (
+                        <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>
+                          {r.copytrade_value_exclusion_reason}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.copytrade_value_score, 1)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.current_position_value_usd, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.total_trades, 0)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.win_rate)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.avg_trade_price, 4)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.realized_edge_score, 4)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.avg_open_top5_depth_usd, 2)}</td>
+                    <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.avg_open_settlement_days, 1)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.roi)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtNum(r.profit_factor, 2)}</td>
                     <td style={{ padding: 10, textAlign: "right" }}>{fmtPct(r.max_drawdown)}</td>
@@ -950,7 +976,7 @@ export function App() {
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={18} style={{ padding: 14, color: "#666" }}>
+                    <td colSpan={20} style={{ padding: 14, color: "#666" }}>
                       暂无数据
                     </td>
                   </tr>
